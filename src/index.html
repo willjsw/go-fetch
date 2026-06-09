@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GoFetch</title>
+    <script type="module" src="/main.js" defer></script>
+  </head>
+
+  <body>
+    <main class="widget" id="app" data-tauri-drag-region>
+      <!-- Empty state (DI-6): shown when no Claude Code session is active. -->
+      <section class="empty-state" id="empty-state">
+        <div class="placeholder-character" aria-hidden="true">
+          <span class="eye"></span>
+          <span class="eye"></span>
+        </div>
+        <p class="empty-title">No active sessions</p>
+        <p class="empty-sub">Monitoring for Claude Code…</p>
+      </section>
+
+      <!-- Session list (filled by later tasks: state machine + visualization). -->
+      <section class="sessions" id="sessions" hidden></section>
+    </main>
+  </body>
+</html>
