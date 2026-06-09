@@ -7,6 +7,8 @@
 // one-line summary plus state, project, path, and elapsed time (DV-1/DV-3).
 // The real pixel-art character replaces the placeholder in Task 11 (GF-16).
 
+import { characterSvg } from "./character.js";
+
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 
@@ -63,9 +65,7 @@ function renderSessions(sessions = []) {
     card.dataset.sessionId = session.id;
     card.title = "Click for details";
     card.innerHTML = `
-      <div class="char state-${state}" aria-hidden="true">
-        <span class="char-icon">${visual.icon}</span>
-      </div>
+      <div class="char state-${state}" aria-hidden="true">${characterSvg(state)}</div>
       <div class="meta">
         <div class="project">${escapeHtml(session.project_name)}</div>
         <div class="state-line">
@@ -106,6 +106,7 @@ function showDetail(sessionId) {
   const popover = document.createElement("div");
   popover.className = `detail-popover state-${state}`;
   popover.innerHTML = `
+    <div class="detail-head"><div class="char state-${state}">${characterSvg(state)}</div></div>
     <div class="detail-summary">${escapeHtml(session.summary)}</div>
     <dl class="detail-meta">
       <div><dt>State</dt><dd>${visual.label}</dd></div>
@@ -132,6 +133,8 @@ async function refresh() {
 }
 
 window.addEventListener("DOMContentLoaded", () => {
+  const emptyChar = document.getElementById("empty-char");
+  if (emptyChar) emptyChar.innerHTML = characterSvg("idle");
   refresh();
   listen("sessions-update", (event) => renderSessions(event.payload));
   document.addEventListener("keydown", (e) => {
