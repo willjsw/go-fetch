@@ -31,7 +31,7 @@ use crate::session::SessionManager;
 /// UI can refresh. `lib.rs` supplies a closure that emits the session snapshot
 /// over Tauri IPC; tests pass a no-op. Keeping the server Tauri-agnostic this
 /// way lets the router be unit-tested without an `AppHandle`.
-pub type UpdateNotifier = Arc<dyn Fn() + Send + Sync>;
+pub type UpdateNotifier = Arc<dyn Fn(&str) + Send + Sync>;
 
 /// Shared axum state: the session state machine plus the UI update notifier.
 #[derive(Clone)]
@@ -110,7 +110,7 @@ async fn handle_event(
             // Feed the session state machine (Task 4) and refresh the UI (Task 5).
             let new_state = state.manager.handle_event(&event);
             if new_state.is_some() {
-                (state.notify)();
+                (state.notify)(&event.session_id);
             }
             eprintln!(
                 "[gofetch] event session_id={} hook_event_name={} -> state={:?}",
@@ -183,7 +183,7 @@ mod tests {
 
     /// Router backed by a fresh manager and a no-op UI notifier.
     fn test_router() -> Router {
-        router(SessionManager::new(), Arc::new(|| {}))
+        router(SessionManager::new(), Arc::new(|_: &str| {}))
     }
 
     /// `/health` returns 200.
