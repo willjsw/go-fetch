@@ -253,6 +253,29 @@ mod tests {
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
+    /// DI-4 (GoFetch side): a 200 response carries NO body, so it can never
+    /// return a blocking `hookSpecificOutput` decision — even for blockable
+    /// events like `Stop`/`PreToolUse`. GoFetch is strictly read-only.
+    #[tokio::test]
+    async fn event_response_has_no_blocking_decision() {
+        let body = r#"{"session_id":"s","hook_event_name":"Stop"}"#;
+        let request = Request::builder()
+            .method("POST")
+            .uri("/event")
+            .header("content-type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+        let response = test_router().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert!(
+            bytes.is_empty(),
+            "read-only invariant: 200 must have an empty body (no decision)"
+        );
+    }
+
     /// Missing the required `session_id` is rejected (still non-blocking 400).
     #[tokio::test]
     async fn missing_required_field_returns_bad_request() {
