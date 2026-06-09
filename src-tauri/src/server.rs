@@ -15,6 +15,7 @@
 //! module only receives, parses, validates, and hands off the normalized event.
 
 use std::net::SocketAddr;
+use std::sync::Arc;
 
 use axum::{
     extract::{rejection::JsonRejection, State},
@@ -25,6 +26,19 @@ use axum::{
 use serde::Deserialize;
 
 use crate::session::SessionManager;
+
+/// Invoked after each state-affecting event (and idle transition) so the widget
+/// UI can refresh. `lib.rs` supplies a closure that emits the session snapshot
+/// over Tauri IPC; tests pass a no-op. Keeping the server Tauri-agnostic this
+/// way lets the router be unit-tested without an `AppHandle`.
+pub type UpdateNotifier = Arc<dyn Fn() + Send + Sync>;
+
+/// Shared axum state: the session state machine plus the UI update notifier.
+#[derive(Clone)]
+struct AppState {
+    manager: SessionManager,
+    notify: UpdateNotifier,
+}
 
 /// Default port GoFetch listens on for Claude Code hook events.
 pub const DEFAULT_PORT: u16 = 31_337;
@@ -88,13 +102,16 @@ async fn health() -> StatusCode {
 /// for malformed JSON. Both are non-blocking on the hook side (verified: non-2xx
 /// is a non-blocking error), so neither can stall the Claude Code session.
 async fn handle_event(
-    State(manager): State<SessionManager>,
+    State(state): State<AppState>,
     payload: Result<Json<HookEvent>, JsonRejection>,
 ) -> StatusCode {
     match payload {
         Ok(Json(event)) => {
-            // Feed the session state machine (Task 4). UI emission is Task 5.
-            let new_state = manager.handle_event(&event);
+            // Feed the session state machine (Task 4) and refresh the UI (Task 5).
+            let new_state = state.manager.handle_event(&event);
+            if new_state.is_some() {
+                (state.notify)();
+            }
             eprintln!(
                 "[gofetch] event session_id={} hook_event_name={} -> state={:?}",
                 event.session_id, event.hook_event_name, new_state
@@ -111,11 +128,11 @@ async fn handle_event(
 /// Build the localhost router, wired to the shared session manager. Public so
 /// integration tests and the `serve` example can exercise it without opening
 /// the Tauri window.
-pub fn router(manager: SessionManager) -> Router {
+pub fn router(manager: SessionManager, notify: UpdateNotifier) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/event", post(handle_event))
-        .with_state(manager)
+        .with_state(AppState { manager, notify })
 }
 
 /// Bind a TCP listener on `127.0.0.1`, trying [`DEFAULT_PORT`] first and then a
@@ -138,11 +155,11 @@ async fn bind_localhost() -> std::io::Result<(tokio::net::TcpListener, u16)> {
 
 /// Start the localhost hook server. Runs until the process exits. Errors are
 /// logged but never propagated, so a server failure can never affect the host.
-pub async fn run(manager: SessionManager) {
+pub async fn run(manager: SessionManager, notify: UpdateNotifier) {
     match bind_localhost().await {
         Ok((listener, port)) => {
             eprintln!("[gofetch] local hook server listening on 127.0.0.1:{port}");
-            if let Err(err) = axum::serve(listener, router(manager)).await {
+            if let Err(err) = axum::serve(listener, router(manager, notify)).await {
                 eprintln!("[gofetch] local hook server stopped: {err}");
             }
         }
@@ -159,10 +176,15 @@ mod tests {
     use axum::http::Request;
     use tower::ServiceExt; // brings `oneshot`
 
+    /// Router backed by a fresh manager and a no-op UI notifier.
+    fn test_router() -> Router {
+        router(SessionManager::new(), Arc::new(|| {}))
+    }
+
     /// `/health` returns 200.
     #[tokio::test]
     async fn health_returns_ok() {
-        let response = router(crate::session::SessionManager::new())
+        let response = test_router()
             .oneshot(Request::builder().uri("/health").body(Body::empty()).unwrap())
             .await
             .unwrap();
@@ -186,7 +208,7 @@ mod tests {
             .header("content-type", "application/json")
             .body(Body::from(body))
             .unwrap();
-        let response = router(crate::session::SessionManager::new()).oneshot(request).await.unwrap();
+        let response = test_router().oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
     }
 
@@ -209,7 +231,7 @@ mod tests {
             .header("content-type", "application/json")
             .body(Body::from(body))
             .unwrap();
-        let response = router(crate::session::SessionManager::new()).oneshot(request).await.unwrap();
+        let response = test_router().oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
     }
 
@@ -222,7 +244,7 @@ mod tests {
             .header("content-type", "application/json")
             .body(Body::from("this is not json"))
             .unwrap();
-        let response = router(crate::session::SessionManager::new()).oneshot(request).await.unwrap();
+        let response = test_router().oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
@@ -236,7 +258,7 @@ mod tests {
             .header("content-type", "application/json")
             .body(Body::from(body))
             .unwrap();
-        let response = router(crate::session::SessionManager::new()).oneshot(request).await.unwrap();
+        let response = test_router().oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 }

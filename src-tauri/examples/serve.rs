@@ -9,8 +9,11 @@
 //!   -d '{"session_id":"s1","hook_event_name":"Stop"}'
 //! ```
 
+use std::sync::Arc;
+
 #[tokio::main]
 async fn main() {
     let manager = gofetch_lib::session::SessionManager::new();
-    gofetch_lib::server::run(manager).await;
+    // No-op UI notifier — this example has no Tauri window to emit to.
+    gofetch_lib::server::run(manager, Arc::new(|| {})).await;
 }
