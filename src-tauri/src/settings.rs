@@ -43,11 +43,31 @@ impl NotificationSettings {
     }
 }
 
+/// Widget display preferences (Task 14 / WC-5).
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WidgetSettings {
+    /// Keep the widget above other windows. Matches tauri.conf default (true).
+    pub always_on_top: bool,
+    /// Hide the widget when every session is idle; reappear on new activity.
+    pub auto_hide: bool,
+}
+
+impl Default for WidgetSettings {
+    fn default() -> Self {
+        Self {
+            always_on_top: true,
+            auto_hide: false,
+        }
+    }
+}
+
 /// Root settings document.
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub notifications: NotificationSettings,
+    pub widget: WidgetSettings,
 }
 
 /// Thread-safe, persisted settings store. Cheap to clone (`Arc`).
@@ -159,5 +179,30 @@ mod tests {
     fn missing_or_invalid_file_falls_back_to_defaults() {
         let store = SettingsStore::at(Some(PathBuf::from("/nonexistent/gofetch/settings.json")));
         assert!(store.notifications().waiting);
+    }
+
+    #[test]
+    fn widget_defaults_and_persist() {
+        let dir = std::env::temp_dir().join(format!("gofetch-widget-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+
+        let store = SettingsStore::at(Some(path.clone()));
+        // Defaults: always-on-top on, auto-hide off.
+        assert!(store.get().widget.always_on_top);
+        assert!(!store.get().widget.auto_hide);
+
+        let mut s = store.get();
+        s.widget.auto_hide = true;
+        s.widget.always_on_top = false;
+        store.set(s);
+
+        let reloaded = SettingsStore::at(Some(path.clone()));
+        assert!(reloaded.get().widget.auto_hide);
+        assert!(!reloaded.get().widget.always_on_top);
+        // Notifications still present alongside widget settings.
+        assert!(reloaded.get().notifications.error);
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

@@ -102,6 +102,7 @@ async function openSettings() {
     autostart = false;
   }
   const n = settings.notifications || {};
+  const w = settings.widget || {};
   closeDetail();
 
   const backdrop = document.createElement("div");
@@ -115,19 +116,27 @@ async function openSettings() {
   panel.innerHTML = `
     <div class="detail-summary">Settings</div>
     <div class="settings-group">Notifications</div>
-    <label class="toggle"><input type="checkbox" class="notif-toggle" data-key="waiting" ${n.waiting ? "checked" : ""}/> Waiting for input</label>
-    <label class="toggle"><input type="checkbox" class="notif-toggle" data-key="error" ${n.error ? "checked" : ""}/> Errors</label>
-    <label class="toggle"><input type="checkbox" class="notif-toggle" data-key="done" ${n.done ? "checked" : ""}/> Task complete</label>
+    <label class="toggle"><input type="checkbox" class="settings-toggle" data-key="waiting" ${n.waiting ? "checked" : ""}/> Waiting for input</label>
+    <label class="toggle"><input type="checkbox" class="settings-toggle" data-key="error" ${n.error ? "checked" : ""}/> Errors</label>
+    <label class="toggle"><input type="checkbox" class="settings-toggle" data-key="done" ${n.done ? "checked" : ""}/> Task complete</label>
+    <div class="settings-group">Widget</div>
+    <label class="toggle"><input type="checkbox" class="settings-toggle" data-key="always_on_top" ${w.always_on_top ? "checked" : ""}/> Always on top</label>
+    <label class="toggle"><input type="checkbox" class="settings-toggle" data-key="auto_hide" ${w.auto_hide ? "checked" : ""}/> Auto-hide when idle</label>
     <div class="settings-group">General</div>
     <label class="toggle"><input type="checkbox" id="autostart-toggle" ${autostart ? "checked" : ""}/> Start on login</label>
     <button class="detail-close" type="button">Close</button>`;
 
+  const checked = (key) => panel.querySelector(`[data-key="${key}"]`).checked;
   const persist = async () => {
     const next = {
       notifications: {
-        waiting: panel.querySelector('[data-key="waiting"]').checked,
-        error: panel.querySelector('[data-key="error"]').checked,
-        done: panel.querySelector('[data-key="done"]').checked,
+        waiting: checked("waiting"),
+        error: checked("error"),
+        done: checked("done"),
+      },
+      widget: {
+        always_on_top: checked("always_on_top"),
+        auto_hide: checked("auto_hide"),
       },
     };
     try {
@@ -136,7 +145,7 @@ async function openSettings() {
       /* keep UI responsive even if save fails */
     }
   };
-  panel.querySelectorAll(".notif-toggle").forEach((cb) =>
+  panel.querySelectorAll(".settings-toggle").forEach((cb) =>
     cb.addEventListener("change", persist),
   );
   panel.querySelector("#autostart-toggle").addEventListener("change", async (e) => {
