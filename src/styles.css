@@ -1,10 +1,17 @@
 :root {
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  font-size: 14px;
+  font-size: 13px;
   color: #e8e8ec;
   --card-bg: rgba(28, 28, 34, 0.92);
+  --row-bg: rgba(255, 255, 255, 0.05);
   --muted: #9a9aa6;
   --accent: #d9d9e3;
+  /* Per-state accent colors */
+  --working: #4ade80;
+  --waiting: #fbbf24;
+  --error: #f87171;
+  --done: #60a5fa;
+  --idle: #9ca3af;
 }
 
 * {
@@ -26,17 +33,21 @@ body {
   height: 100vh;
   width: 100vw;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
   padding: 12px;
   /* Rounded floating card look for the resident widget. */
   background: var(--card-bg);
   border-radius: 16px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
   backdrop-filter: blur(6px);
+  overflow-y: auto;
 }
 
+/* ---- Empty state (DI-6) ---- */
 .empty-state {
+  margin: auto;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -44,7 +55,6 @@ body {
   text-align: center;
 }
 
-/* Placeholder for the pixel-art white AI character (real art in Task 11). */
 .placeholder-character {
   width: 72px;
   height: 72px;
@@ -77,9 +87,126 @@ body {
   color: var(--muted);
 }
 
+/* ---- Session list ---- */
 .sessions {
-  width: 100%;
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.session-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  border-radius: 10px;
+  background: var(--row-bg);
+  border-left: 3px solid var(--idle);
+}
+
+/* Placeholder "character" tile — color = state (real art in Task 11). */
+.char {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f4f4f6;
+  color: #1c1c22;
+  font-size: 18px;
+  image-rendering: pixelated;
+}
+
+.char-icon {
+  line-height: 1;
+}
+
+.meta {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.project {
+  font-weight: 600;
+  color: var(--accent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.state-line {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+
+.state-label {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.hint {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.elapsed {
+  font-size: 10px;
+  color: var(--muted);
+}
+
+/* Per-state coloring for the card accent, character tile, and label. */
+.state-working {
+  border-left-color: var(--working);
+}
+.char.state-working {
+  background: var(--working);
+}
+.state-working .state-label {
+  color: var(--working);
+}
+
+.state-waiting {
+  border-left-color: var(--waiting);
+}
+.char.state-waiting {
+  background: var(--waiting);
+}
+.state-waiting .state-label {
+  color: var(--waiting);
+}
+
+.state-error {
+  border-left-color: var(--error);
+}
+.char.state-error {
+  background: var(--error);
+}
+.state-error .state-label {
+  color: var(--error);
+}
+
+.state-done {
+  border-left-color: var(--done);
+}
+.char.state-done {
+  background: var(--done);
+}
+.state-done .state-label {
+  color: var(--done);
+}
+
+.state-idle {
+  border-left-color: var(--idle);
+}
+.char.state-idle {
+  background: var(--idle);
+}
+.state-idle .state-label {
+  color: var(--idle);
 }
