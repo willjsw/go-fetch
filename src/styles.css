@@ -210,3 +210,82 @@ body {
 .state-idle .state-label {
   color: var(--idle);
 }
+
+/* ---- Detail popover (DV-1 / DV-3) ---- */
+.detail-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  z-index: 10;
+}
+
+.detail-popover {
+  width: 100%;
+  background: #1c1c22;
+  border-radius: 12px;
+  padding: 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  border-top: 3px solid var(--idle);
+}
+.detail-popover.state-working { border-top-color: var(--working); }
+.detail-popover.state-waiting { border-top-color: var(--waiting); }
+.detail-popover.state-error { border-top-color: var(--error); }
+.detail-popover.state-done { border-top-color: var(--done); }
+.detail-popover.state-idle { border-top-color: var(--idle); }
+
+.detail-summary {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  margin-bottom: 10px;
+  word-break: break-word;
+}
+
+.detail-meta {
+  margin: 0 0 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.detail-meta > div {
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.detail-meta dt {
+  flex: 0 0 52px;
+  color: var(--muted);
+  margin: 0;
+}
+
+.detail-meta dd {
+  margin: 0;
+  color: #e8e8ec;
+  word-break: break-all;
+}
+
+.detail-meta dd.path {
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.detail-close {
+  width: 100%;
+  padding: 6px;
+  border: 0;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #e8e8ec;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.detail-close:hover {
+  background: rgba(255, 255, 255, 0.18);
+}

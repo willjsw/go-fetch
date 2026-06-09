@@ -16,7 +16,7 @@ pub mod session;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tauri::{Emitter, Manager};
+use tauri::Emitter;
 use tauri_plugin_notification::NotificationExt;
 
 /// How often the idle ticker checks for `Done` sessions to demote to `Idle`.
