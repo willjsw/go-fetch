@@ -11,5 +11,6 @@
 
 #[tokio::main]
 async fn main() {
-    gofetch_lib::server::run().await;
+    let manager = gofetch_lib::session::SessionManager::new();
+    gofetch_lib::server::run(manager).await;
 }
