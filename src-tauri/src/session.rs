@@ -86,6 +86,10 @@ pub struct Session {
     pub error_type: Option<String>,
     /// Seconds elapsed since the last activity (computed at snapshot time, ST-3).
     pub idle_seconds: u64,
+    /// One-line task summary generated locally from `tool_name`/`tool_input`
+    /// (DV-2), filled at snapshot time. Generated and shown locally only; never
+    /// transmitted anywhere (PC-1/PC-2).
+    pub summary: String,
     /// Instant of the last event for this session. Not serialized.
     #[serde(skip)]
     pub last_activity: Instant,
@@ -107,8 +111,77 @@ impl Session {
             waiting_kind: None,
             error_type: None,
             idle_seconds: 0,
+            summary: String::new(),
             last_activity: now,
         }
+    }
+
+    /// Build the one-line current-task summary (DV-2). Pure, local string
+    /// generation from already-captured fields — does no I/O and sends nothing.
+    pub fn generate_summary(&self) -> String {
+        match self.state {
+            SessionState::Working => match (self.last_tool.as_deref(), self.last_tool_input.as_ref()) {
+                (Some(tool), Some(input)) => summarize_tool(tool, input),
+                (Some(tool), None) => format!("using {tool}"),
+                _ => "working".to_string(),
+            },
+            SessionState::Waiting => match self.waiting_kind.as_deref() {
+                Some("permission_prompt") => "waiting for permission".to_string(),
+                Some("idle_prompt") => "waiting for your next prompt".to_string(),
+                _ => "waiting".to_string(),
+            },
+            SessionState::Error => match self.error_type.as_deref() {
+                Some(kind) => format!("error: {kind}"),
+                None => "stalled".to_string(),
+            },
+            SessionState::Done => "task complete".to_string(),
+            SessionState::Idle => "idle".to_string(),
+        }
+    }
+}
+
+/// Summarize a tool call from its name and input (DV-2).
+fn summarize_tool(tool: &str, input: &serde_json::Value) -> String {
+    let field = |key: &str| input.get(key).and_then(|v| v.as_str());
+    match tool {
+        "Edit" | "Write" | "MultiEdit" | "NotebookEdit" => match field("file_path") {
+            Some(path) => format!("editing {}", last_path_component(path)),
+            None => format!("using {tool}"),
+        },
+        "Read" => match field("file_path") {
+            Some(path) => format!("reading {}", last_path_component(path)),
+            None => "reading a file".to_string(),
+        },
+        "Bash" => match field("command") {
+            Some(cmd) => format!("running {}", truncate_chars(cmd, 48)),
+            None => "running a command".to_string(),
+        },
+        "Grep" | "Glob" => match field("pattern") {
+            Some(pat) => format!("searching {}", truncate_chars(pat, 32)),
+            None => format!("using {tool}"),
+        },
+        other => format!("using {other}"),
+    }
+}
+
+/// Last path component, e.g. `src/auth.ts` → `auth.ts`.
+fn last_path_component(path: &str) -> String {
+    std::path::Path::new(path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| path.to_string())
+}
+
+/// Truncate to at most `max` chars, appending `…` if cut.
+fn truncate_chars(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let mut out: String = s.chars().take(max).collect();
+        out.push('…');
+        out
     }
 }
 
@@ -236,6 +309,7 @@ impl SessionManager {
             .cloned()
             .map(|mut s| {
                 s.idle_seconds = now.saturating_duration_since(s.last_activity).as_secs();
+                s.summary = s.generate_summary();
                 s
             })
             .collect();
@@ -371,6 +445,56 @@ mod tests {
         assert_eq!(snap[0].id, "waiting");
         assert_eq!(snap[1].id, "done");
         assert_eq!(snap[2].id, "working");
+    }
+
+    #[test]
+    fn generates_one_line_summary_from_tool_input() {
+        let m = SessionManager::new();
+        let edit = event_json(serde_json::json!({
+            "session_id": "s", "hook_event_name": "PreToolUse",
+            "tool_name": "Edit", "tool_input": {"file_path": "src/auth/login.ts"}
+        }));
+        m.handle_event(&edit);
+        assert_eq!(m.snapshot()[0].summary, "editing login.ts");
+
+        let bash = event_json(serde_json::json!({
+            "session_id": "s", "hook_event_name": "PreToolUse",
+            "tool_name": "Bash", "tool_input": {"command": "npm test"}
+        }));
+        m.handle_event(&bash);
+        assert_eq!(m.snapshot()[0].summary, "running npm test");
+    }
+
+    #[test]
+    fn summary_covers_waiting_error_done() {
+        let perm = SessionManager::new();
+        perm.handle_event(&event_json(serde_json::json!({
+            "session_id": "s", "hook_event_name": "Notification", "notification_type": "permission_prompt"
+        })));
+        assert_eq!(perm.snapshot()[0].summary, "waiting for permission");
+
+        let err = SessionManager::new();
+        err.handle_event(&event_json(serde_json::json!({
+            "session_id": "s", "hook_event_name": "StopFailure", "error_type": "rate_limit"
+        })));
+        assert_eq!(err.snapshot()[0].summary, "error: rate_limit");
+
+        let done = SessionManager::new();
+        done.handle_event(&event("s", "Stop"));
+        assert_eq!(done.snapshot()[0].summary, "task complete");
+    }
+
+    #[test]
+    fn long_bash_command_is_truncated() {
+        let m = SessionManager::new();
+        let long = "x".repeat(100);
+        m.handle_event(&event_json(serde_json::json!({
+            "session_id": "s", "hook_event_name": "PreToolUse",
+            "tool_name": "Bash", "tool_input": {"command": long}
+        })));
+        let summary = m.snapshot().remove(0).summary;
+        assert!(summary.ends_with('…'));
+        assert!(summary.chars().count() <= "running ".chars().count() + 49);
     }
 
     #[test]
