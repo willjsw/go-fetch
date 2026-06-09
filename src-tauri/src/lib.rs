@@ -12,6 +12,7 @@ pub mod hook_installer;
 pub mod notification;
 pub mod server;
 pub mod session;
+pub mod settings;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -32,22 +33,38 @@ fn get_sessions(manager: tauri::State<session::SessionManager>) -> Vec<session::
     manager.snapshot()
 }
 
+/// Tauri command: read current user settings (Task 12).
+#[tauri::command]
+fn get_settings(store: tauri::State<settings::SettingsStore>) -> settings::Settings {
+    store.get()
+}
+
+/// Tauri command: persist user settings (Task 12).
+#[tauri::command]
+fn set_settings(store: tauri::State<settings::SettingsStore>, settings: settings::Settings) {
+    store.set(settings);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Shared, thread-safe session state machine (Task 4).
     let manager = session::SessionManager::new();
+    // Persisted user settings (Task 12).
+    let settings_store = settings::SettingsStore::load();
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
-        // Expose the manager to `#[tauri::command]`s (e.g. get_sessions).
+        // Expose state to `#[tauri::command]`s.
         .manage(manager.clone())
-        .invoke_handler(tauri::generate_handler![get_sessions])
+        .manage(settings_store.clone())
+        .invoke_handler(tauri::generate_handler![get_sessions, get_settings, set_settings])
         .setup(move |app| {
             let app_handle = app.handle().clone();
 
             // Per-session de-dup for OS notifications (Task 7).
             let notifications = notification::NotificationManager::new();
+            let notify_settings = settings_store.clone();
 
             // Notifier invoked after each state-affecting event / idle change:
             // refresh the widget (Task 5) and fire an OS notification for the
@@ -58,7 +75,8 @@ pub fn run() {
                 let _ = app_handle.emit(SESSIONS_UPDATE_EVENT, &snapshot);
 
                 if let Some(session) = snapshot.iter().find(|s| s.id == session_id) {
-                    if let Some((title, body)) = notifications.should_notify(session) {
+                    let prefs = notify_settings.notifications();
+                    if let Some((title, body)) = notifications.should_notify(session, &prefs) {
                         let _ = app_handle
                             .notification()
                             .builder()
