@@ -90,10 +90,16 @@ function renderSessions(sessions = []) {
 /** Settings panel: per-type notification toggles (NT-3 / Task 12). */
 async function openSettings() {
   let settings;
+  let autostart = false;
   try {
     settings = await invoke("get_settings");
   } catch (_err) {
     settings = { notifications: { waiting: true, error: true, done: true } };
+  }
+  try {
+    autostart = await invoke("get_autostart");
+  } catch (_err) {
+    autostart = false;
   }
   const n = settings.notifications || {};
   closeDetail();
@@ -107,10 +113,13 @@ async function openSettings() {
   const panel = document.createElement("div");
   panel.className = "detail-popover settings-panel";
   panel.innerHTML = `
-    <div class="detail-summary">Notifications</div>
-    <label class="toggle"><input type="checkbox" data-key="waiting" ${n.waiting ? "checked" : ""}/> Waiting for input</label>
-    <label class="toggle"><input type="checkbox" data-key="error" ${n.error ? "checked" : ""}/> Errors</label>
-    <label class="toggle"><input type="checkbox" data-key="done" ${n.done ? "checked" : ""}/> Task complete</label>
+    <div class="detail-summary">Settings</div>
+    <div class="settings-group">Notifications</div>
+    <label class="toggle"><input type="checkbox" class="notif-toggle" data-key="waiting" ${n.waiting ? "checked" : ""}/> Waiting for input</label>
+    <label class="toggle"><input type="checkbox" class="notif-toggle" data-key="error" ${n.error ? "checked" : ""}/> Errors</label>
+    <label class="toggle"><input type="checkbox" class="notif-toggle" data-key="done" ${n.done ? "checked" : ""}/> Task complete</label>
+    <div class="settings-group">General</div>
+    <label class="toggle"><input type="checkbox" id="autostart-toggle" ${autostart ? "checked" : ""}/> Start on login</label>
     <button class="detail-close" type="button">Close</button>`;
 
   const persist = async () => {
@@ -127,9 +136,16 @@ async function openSettings() {
       /* keep UI responsive even if save fails */
     }
   };
-  panel.querySelectorAll('input[type="checkbox"]').forEach((cb) =>
+  panel.querySelectorAll(".notif-toggle").forEach((cb) =>
     cb.addEventListener("change", persist),
   );
+  panel.querySelector("#autostart-toggle").addEventListener("change", async (e) => {
+    try {
+      await invoke("set_autostart", { enabled: e.target.checked });
+    } catch (_err) {
+      e.target.checked = !e.target.checked; // revert on failure
+    }
+  });
   panel.querySelector(".detail-close").addEventListener("click", () => backdrop.remove());
   backdrop.appendChild(panel);
   document.body.appendChild(backdrop);

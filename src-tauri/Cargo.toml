@@ -24,6 +24,8 @@ tauri = { version = "2", features = ["macos-private-api"] }
 tauri-plugin-opener = "2"
 # OS-native notifications (Task 7 / GF-12).
 tauri-plugin-notification = "2"
+# Launch-at-startup option (Task 13 / GF-18).
+tauri-plugin-autostart = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Localhost HTTP receive server for Claude Code hook events (Task 3 / GF-8).
