@@ -330,6 +330,15 @@ impl SessionManager {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
+    /// Whether any session is in a non-idle state. Used for auto-hide (Task 14).
+    pub fn has_active(&self) -> bool {
+        self.sessions
+            .read()
+            .expect("session lock poisoned")
+            .values()
+            .any(|s| s.state != SessionState::Idle)
+    }
 }
 
 #[cfg(test)]
