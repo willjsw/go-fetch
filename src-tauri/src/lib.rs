@@ -5,10 +5,11 @@
 //   - Task 3 (GF-8): localhost-only HTTP receive server for hook events.
 //   - Task 4 (GF-9): per-session state machine + idle timer.
 //   - Task 5 (GF-10): push session snapshots to the widget over Tauri IPC.
-//   - Task 6 (GF-11): auto-register hooks in settings.json on launch, clean up
-//     on exit (SE-3).
+//   - Task 6 (GF-11): auto-register hooks in settings.json, clean up on exit.
+//   - Task 7 (GF-12): OS-native notifications for waiting/error/done.
 
 pub mod hook_installer;
+pub mod notification;
 pub mod server;
 pub mod session;
 
@@ -16,6 +17,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tauri::{Emitter, Manager};
+use tauri_plugin_notification::NotificationExt;
 
 /// How often the idle ticker checks for `Done` sessions to demote to `Idle`.
 const IDLE_TICK: Duration = Duration::from_secs(5);
@@ -37,16 +39,34 @@ pub fn run() {
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
         // Expose the manager to `#[tauri::command]`s (e.g. get_sessions).
         .manage(manager.clone())
         .invoke_handler(tauri::generate_handler![get_sessions])
         .setup(move |app| {
             let app_handle = app.handle().clone();
 
-            // UI update notifier: emit the latest snapshot to the widget (Task 5).
+            // Per-session de-dup for OS notifications (Task 7).
+            let notifications = notification::NotificationManager::new();
+
+            // Notifier invoked after each state-affecting event / idle change:
+            // refresh the widget (Task 5) and fire an OS notification for the
+            // changed session if warranted (Task 7).
             let notify_manager = manager.clone();
-            let notify: server::UpdateNotifier = Arc::new(move || {
-                let _ = app_handle.emit(SESSIONS_UPDATE_EVENT, notify_manager.snapshot());
+            let notify: server::UpdateNotifier = Arc::new(move |session_id: &str| {
+                let snapshot = notify_manager.snapshot();
+                let _ = app_handle.emit(SESSIONS_UPDATE_EVENT, &snapshot);
+
+                if let Some(session) = snapshot.iter().find(|s| s.id == session_id) {
+                    if let Some((title, body)) = notifications.should_notify(session) {
+                        let _ = app_handle
+                            .notification()
+                            .builder()
+                            .title(title)
+                            .body(body)
+                            .show();
+                    }
+                }
             });
 
             // Localhost hook receiver (Task 3), fully detached: any failure is
@@ -63,15 +83,15 @@ pub fn run() {
             });
 
             // Idle ticker (ST-3): demote quiet `Done` sessions to `Idle` and
-            // refresh the UI only when something actually changed.
+            // refresh the UI for each changed session.
             let idle_manager = manager.clone();
             let idle_notify = notify.clone();
             tauri::async_runtime::spawn(async move {
                 let mut ticker = tokio::time::interval(IDLE_TICK);
                 loop {
                     ticker.tick().await;
-                    if !idle_manager.tick_idle().is_empty() {
-                        (idle_notify)();
+                    for id in idle_manager.tick_idle() {
+                        (idle_notify)(&id);
                     }
                 }
             });
