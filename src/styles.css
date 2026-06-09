@@ -6,7 +6,6 @@
   --row-bg: rgba(255, 255, 255, 0.05);
   --muted: #9a9aa6;
   --accent: #d9d9e3;
-  /* Per-state accent colors */
   --working: #4ade80;
   --waiting: #fbbf24;
   --error: #f87171;
@@ -22,7 +21,6 @@ html,
 body {
   margin: 0;
   padding: 0;
-  /* Transparent so the frameless window shows only the rounded card. */
   background: transparent;
   overflow: hidden;
   user-select: none;
@@ -37,12 +35,72 @@ body {
   align-items: stretch;
   gap: 8px;
   padding: 12px;
-  /* Rounded floating card look for the resident widget. */
   background: var(--card-bg);
   border-radius: 16px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
   backdrop-filter: blur(6px);
   overflow-y: auto;
+}
+
+/* ---- Pixel character (SVG) ---- */
+.gf-char {
+  display: block;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+}
+
+.char {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+}
+
+.char-lg {
+  width: 72px;
+  height: 72px;
+}
+
+/* Subtle, ambient per-state motion. */
+@media (prefers-reduced-motion: no-preference) {
+  .gf-char-working {
+    animation: gf-bob 1.3s ease-in-out infinite;
+  }
+  .gf-char-waiting {
+    animation: gf-pulse 1.6s ease-in-out infinite;
+  }
+  .gf-char-error {
+    animation: gf-shake 0.5s ease-in-out infinite;
+  }
+  .gf-char-done {
+    animation: gf-pop 1.8s ease-in-out infinite;
+  }
+  .gf-char-idle {
+    opacity: 0.65;
+    animation: gf-sway 3.5s ease-in-out infinite;
+  }
+}
+
+@keyframes gf-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-1.5px); }
+}
+@keyframes gf-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+@keyframes gf-shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-1.5px); }
+  75% { transform: translateX(1.5px); }
+}
+@keyframes gf-pop {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.08); }
+}
+@keyframes gf-sway {
+  0%, 100% { transform: rotate(-2deg); }
+  50% { transform: rotate(2deg); }
 }
 
 /* ---- Empty state (DI-6) ---- */
@@ -53,26 +111,6 @@ body {
   align-items: center;
   gap: 8px;
   text-align: center;
-}
-
-.placeholder-character {
-  width: 72px;
-  height: 72px;
-  border-radius: 14px;
-  background: #f4f4f6;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  box-shadow: inset 0 -8px 0 rgba(0, 0, 0, 0.06);
-  image-rendering: pixelated;
-}
-
-.placeholder-character .eye {
-  width: 10px;
-  height: 14px;
-  background: #1c1c22;
-  border-radius: 2px;
 }
 
 .empty-title {
@@ -102,25 +140,10 @@ body {
   border-radius: 10px;
   background: var(--row-bg);
   border-left: 3px solid var(--idle);
+  cursor: pointer;
 }
-
-/* Placeholder "character" tile — color = state (real art in Task 11). */
-.char {
-  flex: 0 0 auto;
-  width: 40px;
-  height: 40px;
-  border-radius: 9px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: #f4f4f6;
-  color: #1c1c22;
-  font-size: 18px;
-  image-rendering: pixelated;
-}
-
-.char-icon {
-  line-height: 1;
+.session-card:hover {
+  background: rgba(255, 255, 255, 0.09);
 }
 
 .meta {
@@ -160,56 +183,17 @@ body {
   color: var(--muted);
 }
 
-/* Per-state coloring for the card accent, character tile, and label. */
-.state-working {
-  border-left-color: var(--working);
-}
-.char.state-working {
-  background: var(--working);
-}
-.state-working .state-label {
-  color: var(--working);
-}
-
-.state-waiting {
-  border-left-color: var(--waiting);
-}
-.char.state-waiting {
-  background: var(--waiting);
-}
-.state-waiting .state-label {
-  color: var(--waiting);
-}
-
-.state-error {
-  border-left-color: var(--error);
-}
-.char.state-error {
-  background: var(--error);
-}
-.state-error .state-label {
-  color: var(--error);
-}
-
-.state-done {
-  border-left-color: var(--done);
-}
-.char.state-done {
-  background: var(--done);
-}
-.state-done .state-label {
-  color: var(--done);
-}
-
-.state-idle {
-  border-left-color: var(--idle);
-}
-.char.state-idle {
-  background: var(--idle);
-}
-.state-idle .state-label {
-  color: var(--idle);
-}
+/* Per-state accent on the card border and the state label. */
+.state-working { border-left-color: var(--working); }
+.state-working .state-label { color: var(--working); }
+.state-waiting { border-left-color: var(--waiting); }
+.state-waiting .state-label { color: var(--waiting); }
+.state-error { border-left-color: var(--error); }
+.state-error .state-label { color: var(--error); }
+.state-done { border-left-color: var(--done); }
+.state-done .state-label { color: var(--done); }
+.state-idle { border-left-color: var(--idle); }
+.state-idle .state-label { color: var(--idle); }
 
 /* ---- Detail popover (DV-1 / DV-3) ---- */
 .detail-backdrop {
@@ -237,11 +221,22 @@ body {
 .detail-popover.state-done { border-top-color: var(--done); }
 .detail-popover.state-idle { border-top-color: var(--idle); }
 
+.detail-head {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 8px;
+}
+.detail-head .char {
+  width: 56px;
+  height: 56px;
+}
+
 .detail-summary {
   font-size: 13px;
   font-weight: 600;
   color: var(--accent);
   margin-bottom: 10px;
+  text-align: center;
   word-break: break-word;
 }
 
