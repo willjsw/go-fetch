@@ -14,6 +14,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use crate::session::{Session, SessionState};
+use crate::settings::NotificationSettings;
 
 /// Tracks the last state we notified about, per session, for de-duplication.
 #[derive(Default)]
@@ -27,11 +28,18 @@ impl NotificationManager {
     }
 
     /// Decide whether to notify for the session's current state. Returns the
-    /// `(title, body)` to show, or `None` to stay silent. Updates the
-    /// dedup record only when it returns `Some`.
-    pub fn should_notify(&self, session: &Session) -> Option<(String, String)> {
+    /// `(title, body)` to show, or `None` to stay silent. Honors the per-type
+    /// toggles (NT-3) and updates the dedup record only when it returns `Some`.
+    pub fn should_notify(
+        &self,
+        session: &Session,
+        settings: &NotificationSettings,
+    ) -> Option<(String, String)> {
         if !session.state.is_notifiable() {
             return None;
+        }
+        if !settings.enabled_for(session.state) {
+            return None; // NT-3: this notification type is turned off.
         }
         let mut last = self.last_notified.lock().expect("notify lock poisoned");
         if last.get(&session.id) == Some(&session.state) {
@@ -80,6 +88,8 @@ mod tests {
         mgr.snapshot().into_iter().find(|s| s.id == id).unwrap()
     }
 
+    const ALL_ON: NotificationSettings = NotificationSettings { waiting: true, error: true, done: true };
+
     #[test]
     fn notifies_waiting_error_done_with_project() {
         let nm = NotificationManager::new();
@@ -88,7 +98,7 @@ mod tests {
             "a",
             json!({"session_id":"a","hook_event_name":"Notification","notification_type":"permission_prompt","cwd":"/x/api-server"}),
         );
-        let (title, body) = nm.should_notify(&waiting).expect("waiting notifies");
+        let (title, body) = nm.should_notify(&waiting, &ALL_ON).expect("waiting notifies");
         assert_eq!(title, "Waiting for permission");
         assert!(body.contains("api-server"), "body must carry project name (NT-2): {body}");
 
@@ -96,12 +106,12 @@ mod tests {
             "b",
             json!({"session_id":"b","hook_event_name":"StopFailure","error_type":"rate_limit","cwd":"/x/web"}),
         );
-        let (title, body) = nm.should_notify(&err).unwrap();
+        let (title, body) = nm.should_notify(&err, &ALL_ON).unwrap();
         assert_eq!(title, "Session error");
         assert!(body.contains("rate_limit") && body.contains("web"));
 
         let done = session("c", json!({"session_id":"c","hook_event_name":"Stop","cwd":"/x/cli"}));
-        assert_eq!(nm.should_notify(&done).unwrap().0, "Task complete");
+        assert_eq!(nm.should_notify(&done, &ALL_ON).unwrap().0, "Task complete");
     }
 
     #[test]
@@ -111,7 +121,7 @@ mod tests {
             "w",
             json!({"session_id":"w","hook_event_name":"PreToolUse","tool_name":"Bash","cwd":"/x/p"}),
         );
-        assert!(nm.should_notify(&working).is_none(), "Working must not notify (NT-1)");
+        assert!(nm.should_notify(&working, &ALL_ON).is_none(), "Working must not notify (NT-1)");
     }
 
     #[test]
@@ -123,8 +133,8 @@ mod tests {
                 json!({"session_id":"d","hook_event_name":"Notification","notification_type":"idle_prompt","cwd":"/x/p"}),
             )
         };
-        assert!(nm.should_notify(&make()).is_some(), "first waiting notifies");
-        assert!(nm.should_notify(&make()).is_none(), "second identical waiting suppressed (NT-4)");
+        assert!(nm.should_notify(&make(), &ALL_ON).is_some(), "first waiting notifies");
+        assert!(nm.should_notify(&make(), &ALL_ON).is_none(), "second identical waiting suppressed (NT-4)");
     }
 
     #[test]
@@ -136,8 +146,23 @@ mod tests {
         );
         let done = session("e", json!({"session_id":"e","hook_event_name":"Stop","cwd":"/x/p"}));
 
-        assert!(nm.should_notify(&waiting).is_some());
-        assert!(nm.should_notify(&done).is_some(), "different state notifies");
-        assert!(nm.should_notify(&waiting).is_some(), "back to waiting notifies again");
+        assert!(nm.should_notify(&waiting, &ALL_ON).is_some());
+        assert!(nm.should_notify(&done, &ALL_ON).is_some(), "different state notifies");
+        assert!(nm.should_notify(&waiting, &ALL_ON).is_some(), "back to waiting notifies again");
+    }
+
+    #[test]
+    fn disabled_type_is_not_notified() {
+        let nm = NotificationManager::new();
+        let waiting_off = NotificationSettings { waiting: false, error: true, done: true };
+        let waiting = session(
+            "f",
+            json!({"session_id":"f","hook_event_name":"Notification","notification_type":"permission_prompt","cwd":"/x/p"}),
+        );
+        assert!(nm.should_notify(&waiting, &waiting_off).is_none(), "waiting disabled → no notify (NT-3)");
+
+        // Other types still fire.
+        let done = session("g", json!({"session_id":"g","hook_event_name":"Stop","cwd":"/x/p"}));
+        assert!(nm.should_notify(&done, &waiting_off).is_some());
     }
 }
