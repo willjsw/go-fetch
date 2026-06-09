@@ -307,6 +307,14 @@ body {
   color: var(--accent);
 }
 
+.settings-panel .settings-group {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin: 8px 0 2px;
+}
+
 .settings-panel .toggle {
   display: flex;
   align-items: center;

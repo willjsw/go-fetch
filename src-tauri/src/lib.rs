@@ -45,6 +45,26 @@ fn set_settings(store: tauri::State<settings::SettingsStore>, settings: settings
     store.set(settings);
 }
 
+/// Tauri command: is launch-at-startup currently enabled (Task 13)?
+#[tauri::command]
+fn get_autostart(app: tauri::AppHandle) -> bool {
+    use tauri_plugin_autostart::ManagerExt;
+    app.autolaunch().is_enabled().unwrap_or(false)
+}
+
+/// Tauri command: enable/disable launch-at-startup (Task 13 / SE-2).
+#[tauri::command]
+fn set_autostart(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    use tauri_plugin_autostart::ManagerExt;
+    let manager = app.autolaunch();
+    let result = if enabled {
+        manager.enable()
+    } else {
+        manager.disable()
+    };
+    result.map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Shared, thread-safe session state machine (Task 4).
@@ -55,10 +75,21 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        // Launch-at-startup via a macOS LaunchAgent (Task 13 / SE-2).
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         // Expose state to `#[tauri::command]`s.
         .manage(manager.clone())
         .manage(settings_store.clone())
-        .invoke_handler(tauri::generate_handler![get_sessions, get_settings, set_settings])
+        .invoke_handler(tauri::generate_handler![
+            get_sessions,
+            get_settings,
+            set_settings,
+            get_autostart,
+            set_autostart
+        ])
         .setup(move |app| {
             let app_handle = app.handle().clone();
 
