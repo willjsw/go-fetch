@@ -14,6 +14,6 @@ use std::sync::Arc;
 #[tokio::main]
 async fn main() {
     let manager = gofetch_lib::session::SessionManager::new();
-    // No-op UI notifier — this example has no Tauri window to emit to.
-    gofetch_lib::server::run(manager, Arc::new(|| {})).await;
+    // No-op UI notifier + no-op port reporter — this example only serves HTTP.
+    gofetch_lib::server::run(manager, Arc::new(|| {}), |_port| {}).await;
 }

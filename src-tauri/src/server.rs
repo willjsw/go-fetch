@@ -155,10 +155,15 @@ async fn bind_localhost() -> std::io::Result<(tokio::net::TcpListener, u16)> {
 
 /// Start the localhost hook server. Runs until the process exits. Errors are
 /// logged but never propagated, so a server failure can never affect the host.
-pub async fn run(manager: SessionManager, notify: UpdateNotifier) {
+pub async fn run<F>(manager: SessionManager, notify: UpdateNotifier, on_bound: F)
+where
+    F: FnOnce(u16) + Send + 'static,
+{
     match bind_localhost().await {
         Ok((listener, port)) => {
             eprintln!("[gofetch] local hook server listening on 127.0.0.1:{port}");
+            // Report the actual bound port so hooks register with the right URL.
+            on_bound(port);
             if let Err(err) = axum::serve(listener, router(manager, notify)).await {
                 eprintln!("[gofetch] local hook server stopped: {err}");
             }

@@ -5,7 +5,10 @@
 //   - Task 3 (GF-8): localhost-only HTTP receive server for hook events.
 //   - Task 4 (GF-9): per-session state machine + idle timer.
 //   - Task 5 (GF-10): push session snapshots to the widget over Tauri IPC.
+//   - Task 6 (GF-11): auto-register hooks in settings.json on launch, clean up
+//     on exit (SE-3).
 
+pub mod hook_installer;
 pub mod server;
 pub mod session;
 
@@ -32,7 +35,7 @@ pub fn run() {
     // Shared, thread-safe session state machine (Task 4).
     let manager = session::SessionManager::new();
 
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         // Expose the manager to `#[tauri::command]`s (e.g. get_sessions).
         .manage(manager.clone())
@@ -48,10 +51,15 @@ pub fn run() {
 
             // Localhost hook receiver (Task 3), fully detached: any failure is
             // logged inside `server::run` and never affects the host (DI-4).
+            // Once it binds, register the hooks in settings.json with the actual
+            // port (Task 6 / SE-3).
             let server_manager = manager.clone();
             let server_notify = notify.clone();
             tauri::async_runtime::spawn(async move {
-                server::run(server_manager, server_notify).await;
+                server::run(server_manager, server_notify, |port| {
+                    hook_installer::register(port);
+                })
+                .await;
             });
 
             // Idle ticker (ST-3): demote quiet `Done` sessions to `Idle` and
@@ -70,6 +78,13 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    // Clean up GoFetch's hooks from settings.json when the app exits (SE-3).
+    app.run(|_app_handle, event| {
+        if let tauri::RunEvent::Exit = event {
+            hook_installer::unregister();
+        }
+    });
 }
