@@ -138,19 +138,7 @@ function renderActiveMode() {
     renderCardsMode(list, topLevel, showDetail);
   }
 
-  updateMotionState();
   syncOpenDetail();
-}
-
-/**
- * Pause ambient bounce only when everything is calm (G1): the stage goes
- * "quiet" when every session is idle/pending. Anything else — working, and
- * especially done/waiting/error — keeps bouncing so a finished, waiting, or
- * errored session stays eye-catching. The idle nap and root float remain.
- */
-function updateMotionState() {
-  const active = currentSessions.some((s) => !s.pending && s.state !== "idle");
-  document.body.classList.toggle("gf-quiet", !active);
 }
 
 /** Reflect the active mode on the tab buttons (.active + aria-selected). */
