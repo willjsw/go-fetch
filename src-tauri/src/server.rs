@@ -14,6 +14,7 @@
 //! Event → state conversion lives in the session state machine (Task 4); this
 //! module only receives, parses, validates, and hands off the normalized event.
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -99,9 +100,19 @@ pub struct HookEvent {
     /// Sub-agent type, present only inside sub-agents.
     #[serde(default)]
     pub agent_type: Option<String>,
+    /// Unique sub-agent identifier — present only inside a sub-agent's hooks.
+    /// GF-114 probe target: this is what would distinguish a child node from the
+    /// parent session (sub-agents share the parent's `session_id`).
+    #[serde(default)]
+    pub agent_id: Option<String>,
     /// Optional human-friendly session title.
     #[serde(default)]
     pub session_title: Option<String>,
+
+    /// Any remaining raw fields, captured for the GF-114 probe so we can see
+    /// exactly what a sub-agent payload carries without guessing the schema.
+    #[serde(flatten)]
+    pub extra: HashMap<String, serde_json::Value>,
 
     // --- SessionEnd (verified spec, F2) ---
     /// Why the session ended: `clear` / `resume` / `logout` /
@@ -134,6 +145,20 @@ async fn handle_event(
             let outcome = state.manager.handle_event(&event);
             if !matches!(outcome, EventOutcome::Ignored) {
                 (state.notify)(&event.session_id);
+            }
+            // GF-114 probe: dump sub-agent-related payloads so we can verify
+            // whether `agent_id` is actually delivered (the Layer 2 gate). These
+            // events are rare, so the extra logging is cheap and stays
+            // non-blocking (DI-4). See docs/SUBAGENT_HOOK_PROBE.md.
+            if event.hook_event_name.starts_with("Subagent") || event.agent_id.is_some() {
+                eprintln!(
+                    "[gofetch][probe] subagent payload: hook_event_name={} session_id={} agent_id={:?} agent_type={:?} extra_keys={:?}",
+                    event.hook_event_name,
+                    event.session_id,
+                    event.agent_id,
+                    event.agent_type,
+                    event.extra.keys().collect::<Vec<_>>(),
+                );
             }
             eprintln!(
                 "[gofetch] event session_id={} hook_event_name={} -> {:?}",

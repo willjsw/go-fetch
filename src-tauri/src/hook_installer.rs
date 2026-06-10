@@ -21,7 +21,11 @@ use serde_json::{json, Map, Value};
 /// `None` matcher fires on all (tool events) or has no matcher (Stop / Session
 /// family). `SessionStart`/`SessionEnd` drive the widget's session lifecycle
 /// (SL-1/SL-2): the card appears on start and is cleared on end.
-const TOOL_AND_LIFECYCLE_EVENTS: [&str; 7] = [
+/// `SubagentStart`/`SubagentStop` are subscribed for the Layer 2 probe (GF-114):
+/// they let GoFetch *observe* sub-agent lifecycle so we can verify what the raw
+/// payload carries (e.g. `agent_id`) before building the sub-agent tree. They do
+/// not change session state today (the state machine ignores them).
+const TOOL_AND_LIFECYCLE_EVENTS: [&str; 9] = [
     "SessionStart",
     "SessionEnd",
     "Stop",
@@ -29,6 +33,8 @@ const TOOL_AND_LIFECYCLE_EVENTS: [&str; 7] = [
     "PreToolUse",
     "PostToolUse",
     "UserPromptSubmit",
+    "SubagentStart",
+    "SubagentStop",
 ];
 
 /// Path to the user-level Claude Code settings file. Overridable via
@@ -262,6 +268,8 @@ mod tests {
             "PreToolUse",
             "PostToolUse",
             "UserPromptSubmit",
+            "SubagentStart",
+            "SubagentStop",
         ] {
             assert!(settings["hooks"][event].is_array(), "missing event {event}");
         }
@@ -375,7 +383,7 @@ mod tests {
 
         let reloaded = load(&path).unwrap();
         assert_eq!(reloaded["existing"], true);
-        assert_eq!(count_gofetch_handlers(&reloaded), 9); // 2 Notification + 7 others
+        assert_eq!(count_gofetch_handlers(&reloaded), 11); // 2 Notification + 9 others
 
         let mut cleaned = reloaded;
         apply_unregister(&mut cleaned);
