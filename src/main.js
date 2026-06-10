@@ -11,6 +11,7 @@ import { characterSvg } from "./character.js";
 
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
+const { getCurrentWindow } = window.__TAURI__.window;
 
 const STATE_VISUALS = {
   working: { label: "Working", icon: "⚙" },
@@ -210,6 +211,22 @@ window.addEventListener("DOMContentLoaded", () => {
   if (emptyChar) emptyChar.innerHTML = characterSvg("idle");
   const gear = document.getElementById("gear");
   if (gear) gear.addEventListener("click", openSettings);
+
+  // Window controls (WC-6): − hides to tray (restored via tray left-click),
+  // × fully quits (Rust `quit_app` → app.exit → hook cleanup).
+  const winMin = document.getElementById("win-min");
+  if (winMin)
+    winMin.addEventListener("click", () => {
+      getCurrentWindow()
+        .hide()
+        .catch(() => {});
+    });
+  const winClose = document.getElementById("win-close");
+  if (winClose)
+    winClose.addEventListener("click", () => {
+      invoke("quit_app").catch(() => {});
+    });
+
   refresh();
   listen("sessions-update", (event) => renderSessions(event.payload));
   document.addEventListener("keydown", (e) => {

@@ -83,6 +83,14 @@ fn get_autostart(app: tauri::AppHandle) -> bool {
     app.autolaunch().is_enabled().unwrap_or(false)
 }
 
+/// Tauri command: fully quit GoFetch (WC-6, `x` button). Triggers the app's
+/// `RunEvent::Exit` so GoFetch's hooks are cleaned out of `settings.json`
+/// (SE-3). The `−` button uses `window.hide()` instead (kept resident in tray).
+#[tauri::command]
+fn quit_app(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
 /// Tauri command: enable/disable launch-at-startup (Task 13 / SE-2).
 #[tauri::command]
 fn set_autostart(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
@@ -116,7 +124,8 @@ pub fn run() {
             get_settings,
             set_settings,
             get_autostart,
-            set_autostart
+            set_autostart,
+            quit_app
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
