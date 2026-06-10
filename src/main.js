@@ -9,6 +9,7 @@
 
 import { characterSvg } from "./character.js";
 import { renderCardsMode } from "./cards-mode.js";
+import { renderAnimMode } from "./anim-mode.js";
 import { STATE_VISUALS, visualKey, escapeHtml, formatElapsed } from "./utils.js";
 
 const { invoke } = window.__TAURI__.core;
@@ -93,8 +94,8 @@ export function setMode(mode) {
 /**
  * Paint the current store snapshot using the active mode's renderer. In cards
  * mode an empty list shows the empty state (DI-6); in animated mode the stage
- * takes over. The real character renderer is wired in GF-112 — until then the
- * stage shows a placeholder so the tab is functional end-to-end.
+ * takes over and the root Fetchy is always shown — even with zero sessions
+ * (AM-2).
  */
 function renderActiveMode() {
   const empty = document.getElementById("empty-state");
@@ -109,7 +110,7 @@ function renderActiveMode() {
     list.hidden = true;
     if (stage) {
       stage.hidden = false;
-      stage.innerHTML = '<p class="stage-placeholder">Animated mode — coming soon</p>';
+      renderAnimMode(stage, currentSessions, showDetail);
     }
   } else {
     if (stage) stage.hidden = true;
