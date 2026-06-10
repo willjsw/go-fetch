@@ -117,6 +117,17 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
+        // Persist widget position/size across restarts (WC-9). Only SIZE +
+        // POSITION are tracked — visibility stays under our tray/auto-hide
+        // control (WC-5), so the plugin never fights the show/hide logic.
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::SIZE
+                        | tauri_plugin_window_state::StateFlags::POSITION,
+                )
+                .build(),
+        )
         .manage(manager.clone())
         .manage(settings_store.clone())
         .invoke_handler(tauri::generate_handler![
