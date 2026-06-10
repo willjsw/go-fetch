@@ -11,6 +11,7 @@
   --error: #f87171;
   --done: #60a5fa;
   --idle: #9ca3af;
+  --pending: #a78bfa;
 }
 
 * {
@@ -217,6 +218,8 @@ body {
 .state-done .state-label { color: var(--done); }
 .state-idle { border-left-color: var(--idle); }
 .state-idle .state-label { color: var(--idle); }
+.state-pending { border-left-color: var(--pending); }
+.state-pending .state-label { color: var(--pending); }
 
 /* ---- Detail popover (DV-1 / DV-3) ---- */
 .detail-backdrop {
@@ -243,6 +246,7 @@ body {
 .detail-popover.state-error { border-top-color: var(--error); }
 .detail-popover.state-done { border-top-color: var(--done); }
 .detail-popover.state-idle { border-top-color: var(--idle); }
+.detail-popover.state-pending { border-top-color: var(--pending); }
 
 .detail-head {
   display: flex;

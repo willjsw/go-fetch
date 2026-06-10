@@ -54,7 +54,19 @@ const STATE_VISUALS = {
   error: { label: "Error", icon: "✕" },
   done: { label: "Done", icon: "✓" },
   idle: { label: "Idle", icon: "z" },
+  // SL-5: detected (e.g. pre-existing / just started) but state unconfirmed.
+  pending: { label: "Detecting…", icon: "?" },
 };
+
+/**
+ * Visual key for a session: a `pending` session (polling-seeded or just
+ * started, SL-5) shows the neutral "?" expression regardless of its underlying
+ * placeholder state; otherwise the mapped state (fallback `idle`).
+ */
+function visualKey(session) {
+  if (session && session.pending) return "pending";
+  return STATE_VISUALS[session.state] ? session.state : "idle";
+}
 
 // Latest snapshot, kept so a card click can look its session up by id.
 let currentSessions = [];
@@ -93,7 +105,7 @@ function renderSessions(sessions = []) {
   list.innerHTML = "";
 
   for (const session of currentSessions) {
-    const state = STATE_VISUALS[session.state] ? session.state : "idle";
+    const state = visualKey(session);
     const visual = STATE_VISUALS[state];
 
     const card = document.createElement("div");
@@ -202,7 +214,7 @@ function showDetail(sessionId) {
   if (!session) return;
   closeDetail();
 
-  const state = STATE_VISUALS[session.state] ? session.state : "idle";
+  const state = visualKey(session);
   const visual = STATE_VISUALS[state];
 
   const backdrop = document.createElement("div");
