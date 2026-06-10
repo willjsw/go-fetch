@@ -34,13 +34,46 @@ body {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 8px;
-  padding: 12px;
+  gap: 0;
+  padding: 0;
   background: var(--card-bg);
   border-radius: 16px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
   backdrop-filter: blur(6px);
+  /* The title bar is fixed; only `.content` scrolls. */
+  overflow: hidden;
+}
+
+/* ---- Title bar (WC-6): drag handle + window controls, divided from content ---- */
+.titlebar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 8px;
+  background: rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px 16px 0 0;
+}
+.titlebar .title {
+  flex: 1 1 auto;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+/* ---- Content area (scrolls under the fixed title bar) ---- */
+.content {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
 }
 
 /* ---- Pixel character (SVG) ---- */
@@ -338,12 +371,9 @@ body {
 .rsz.se { bottom: 0; right: 0; cursor: nwse-resize; }
 .rsz.sw { bottom: 0; left: 0; cursor: nesw-resize; }
 
-/* ---- Window controls (WC-6: hide / quit) ---- */
+/* ---- Window controls (WC-6: hide / quit) — static items in the title bar ---- */
 .winctl {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  z-index: 6;
+  flex: 0 0 auto;
   display: flex;
   gap: 4px;
 }
@@ -368,12 +398,9 @@ body {
   color: #fff;
 }
 
-/* ---- Settings (gear + toggles, Task 12) ---- */
+/* ---- Settings (gear + toggles, Task 12) — static item in the title bar ---- */
 .gear {
-  position: absolute;
-  top: 8px;
-  left: 8px;
-  z-index: 5;
+  flex: 0 0 auto;
   width: 22px;
   height: 22px;
   padding: 0;
