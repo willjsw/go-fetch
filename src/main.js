@@ -219,11 +219,16 @@ function showDetail(sessionId) {
 
   const state = visualKey(session);
   const visual = STATE_VISUALS[state];
-  // Only finished / neglected / unconfirmed sessions may be dismissed (GF-106):
-  // DONE, IDLE, or DETECTING(pending). Active states (working/waiting/error)
-  // are left alone so the user doesn't drop a session that still needs them.
+  // Sessions that are finished, neglected, unconfirmed, or stalled may be
+  // dismissed: DONE, IDLE, DETECTING(pending), or ERROR (GF-106/GF-107 — a
+  // stalled session is something the user may want to clear). Only the truly
+  // live states (working / waiting-for-you) keep the button hidden so the user
+  // can't drop a session that still needs them.
   const canStop =
-    session.pending || session.state === "idle" || session.state === "done";
+    session.pending ||
+    session.state === "idle" ||
+    session.state === "done" ||
+    session.state === "error";
 
   const backdrop = document.createElement("div");
   backdrop.className = "detail-backdrop";

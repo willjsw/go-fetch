@@ -15,6 +15,7 @@
 //! shared as axum state and read by the widget UI (Task 5).
 
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
@@ -263,7 +264,13 @@ pub struct SessionManager {
     /// pre-existing poll won't re-seed these, so a manually-removed session
     /// stays gone even while its process is still alive — until a real hook
     /// event for it arrives, which un-dismisses it (it's active again, GF-106).
+    /// Persisted to disk (GF-107) so a dismissal survives a restart: otherwise
+    /// a fresh run would lose this set and the poll would re-seed the still-alive
+    /// session, making the dismissed card reappear.
     dismissed: Arc<RwLock<HashSet<String>>>,
+    /// Where `dismissed` is persisted. `None` (the default / test path) keeps the
+    /// set purely in-memory — no I/O — so tests stay pure (GF-107).
+    dismissed_path: Option<PathBuf>,
     idle_after: Duration,
     stale_after: Duration,
 }
@@ -287,8 +294,44 @@ impl SessionManager {
         SessionManager {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             dismissed: Arc::new(RwLock::new(HashSet::new())),
+            dismissed_path: None,
             idle_after,
             stale_after,
+        }
+    }
+
+    /// Production constructor (GF-107): like [`Self::new`] but loads the set of
+    /// previously-dismissed session ids from `path` and persists future changes
+    /// there. `None` degrades to in-memory only (e.g. no resolvable home dir).
+    /// Set the path before any clone so all clones share it.
+    pub fn with_persistence(path: Option<PathBuf>) -> Self {
+        let mut manager = Self::new();
+        if let Some(path) = path {
+            if let Some(loaded) = read_dismissed(&path) {
+                *manager.dismissed.write().expect("dismissed lock poisoned") = loaded;
+            }
+            manager.dismissed_path = Some(path);
+        }
+        manager
+    }
+
+    /// Persist the dismissed set (best-effort). Holds the write lock across the
+    /// file write so concurrent savers — the hook thread un-dismissing vs. the
+    /// poll thread pruning — can't interleave and tear the file. Dismissals are
+    /// rare and the set is tiny, so holding the lock briefly is cheap. A no-op
+    /// when there is no path (tests / in-memory mode).
+    fn save_dismissed(&self) {
+        let Some(path) = self.dismissed_path.as_ref() else {
+            return;
+        };
+        let set = self.dismissed.write().expect("dismissed lock poisoned");
+        let mut ids: Vec<String> = set.iter().cloned().collect();
+        ids.sort(); // deterministic file, avoids needless churn
+        if let Err(e) = write_dismissed(path, &ids) {
+            eprintln!(
+                "[gofetch] failed to save dismissed sessions to {}: {e}",
+                path.display()
+            );
         }
     }
 
@@ -301,11 +344,17 @@ impl SessionManager {
         // Any real hook activity un-dismisses a user-dismissed session, so a
         // session the user removed reappears once it becomes active again
         // (GF-106). GoFetch only receives the hooks it registered, all of which
-        // are genuine activity, so this is safe to do for every event.
-        self.dismissed
+        // are genuine activity, so this is safe to do for every event. Persist
+        // only when something actually changed (GF-107) — un-dismissal is rare,
+        // so this never writes the file on routine PreToolUse/PostToolUse churn.
+        let was_dismissed = self
+            .dismissed
             .write()
             .expect("dismissed lock poisoned")
             .remove(&event.session_id);
+        if was_dismissed {
+            self.save_dismissed();
+        }
 
         match event.hook_event_name.as_str() {
             "SessionStart" => {
@@ -490,7 +539,29 @@ impl SessionManager {
             .write()
             .expect("dismissed lock poisoned")
             .insert(session_id.to_string());
+        self.save_dismissed(); // remember across restart (GF-107)
         self.remove(session_id)
+    }
+
+    /// Drop dismissed ids whose sessions are no longer alive, given the set of
+    /// currently-alive session ids from the pre-existing poll (GF-107). Keeps
+    /// the persisted set bounded to live-but-dismissed sessions: once a dismissed
+    /// session's process is gone (absent from `claude agents --json`), there is
+    /// nothing left to re-seed, so its id is just dead weight in the file. Only
+    /// call with an authoritative poll snapshot (the same basis the seed/touch
+    /// loop already trusts); skips persistence when nothing changed. Returns
+    /// whether the set changed.
+    pub fn prune_dismissed(&self, alive: &HashSet<String>) -> bool {
+        let changed = {
+            let mut set = self.dismissed.write().expect("dismissed lock poisoned");
+            let before = set.len();
+            set.retain(|id| alive.contains(id));
+            set.len() != before
+        };
+        if changed {
+            self.save_dismissed();
+        }
+        changed
     }
 
     /// Snapshot of all sessions, sorted by monitoring priority then project
@@ -538,6 +609,39 @@ impl SessionManager {
             .values()
             .any(|s| s.state != SessionState::Idle || s.pending)
     }
+}
+
+/// Resolve the file that persists user-dismissed session ids (GF-107). Sibling
+/// of `settings.json` under `~/.gofetch`. `GOFETCH_DISMISSED_PATH` overrides it
+/// (tests / manual runs). `None` when no home dir is resolvable, which degrades
+/// the manager to in-memory dismissals.
+pub fn dismissed_path() -> Option<PathBuf> {
+    if let Some(p) = std::env::var_os("GOFETCH_DISMISSED_PATH") {
+        return Some(PathBuf::from(p));
+    }
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(|h| PathBuf::from(h).join(".gofetch").join("dismissed.json"))
+}
+
+/// Read the persisted dismissed-id set. `None` if the file is missing or invalid
+/// (degrade to an empty set — a corrupt file must never block startup).
+fn read_dismissed(path: &PathBuf) -> Option<HashSet<String>> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let ids: Vec<String> = serde_json::from_str(&text).ok()?;
+    Some(ids.into_iter().collect())
+}
+
+/// Persist the dismissed-id set atomically (write temp + rename) so a concurrent
+/// reader/saver never sees a half-written file.
+fn write_dismissed(path: &PathBuf, ids: &[String]) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let text = serde_json::to_string_pretty(ids).unwrap_or_else(|_| "[]".to_string());
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, text + "\n")?;
+    std::fs::rename(&tmp, path)
 }
 
 #[cfg(test)]
@@ -790,6 +894,71 @@ mod tests {
         // After un-dismiss, polling could seed it again too.
         m.remove("s");
         assert!(m.seed_pending("s", None, Instant::now()), "no longer dismissed → seedable");
+    }
+
+    #[test]
+    fn dismissal_persists_across_restart() {
+        // GF-107: a dismissal must survive an app restart, otherwise the poll
+        // re-seeds the still-alive session and the removed card reappears.
+        let dir = std::env::temp_dir().join(format!("gofetch-dismiss-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("dismissed.json");
+
+        // First "run": dismiss a live session → persisted to disk.
+        let m1 = SessionManager::with_persistence(Some(path.clone()));
+        m1.seed_pending("alive", None, Instant::now());
+        assert!(m1.dismiss("alive"));
+
+        // Second "run" (fresh manager, same file): the dismissal is remembered,
+        // so the pre-existing poll must NOT re-seed the still-alive session.
+        let m2 = SessionManager::with_persistence(Some(path.clone()));
+        assert!(
+            !m2.seed_pending("alive", None, Instant::now()),
+            "a persisted dismissal keeps the session hidden after restart"
+        );
+        assert!(m2.is_empty());
+
+        // A real hook event un-dismisses it and persists the removal.
+        m2.handle_event(&event("alive", "PreToolUse"));
+        let m3 = SessionManager::with_persistence(Some(path.clone()));
+        assert!(
+            m3.seed_pending("alive", None, Instant::now()),
+            "un-dismissal persists too → seedable again on the next restart"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn prune_dismissed_drops_dead_ids() {
+        // GF-107: a dismissed session whose process has ended (absent from the
+        // poll) is pruned from the persisted set so the file can't grow forever.
+        let dir = std::env::temp_dir().join(format!("gofetch-prune-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("dismissed.json");
+
+        let m = SessionManager::with_persistence(Some(path.clone()));
+        m.seed_pending("a", None, Instant::now());
+        m.seed_pending("b", None, Instant::now());
+        assert!(m.dismiss("a"));
+        assert!(m.dismiss("b"));
+
+        // Poll now sees only "a" alive; "b"'s process is gone.
+        let alive: HashSet<String> = ["a".to_string()].into_iter().collect();
+        assert!(m.prune_dismissed(&alive), "pruning a dead dismissed id reports a change");
+        // Idempotent: nothing more to drop.
+        assert!(!m.prune_dismissed(&alive));
+
+        // "a" is still alive+dismissed → stays hidden; "b" was pruned → seedable.
+        assert!(!m.seed_pending("a", None, Instant::now()), "still-alive dismissal stays hidden");
+        assert!(m.seed_pending("b", None, Instant::now()), "pruned dead id is seedable again");
+
+        // The prune was persisted: a fresh run no longer suppresses "b".
+        m.remove("b");
+        let m2 = SessionManager::with_persistence(Some(path.clone()));
+        assert!(m2.seed_pending("b", None, Instant::now()), "prune persisted across restart");
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
