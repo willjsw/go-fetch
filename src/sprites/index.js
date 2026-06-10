@@ -16,11 +16,11 @@ export const CHARACTERS = { dog, robot, penguin, terminator, cat, jensen, dust }
 
 /** Display labels for the settings picker, in menu order. */
 export const CHARACTER_LABELS = [
-  ["dog", "강아지 Fetchy"],
-  ["robot", "로봇"],
-  ["penguin", "펭귄"],
-  ["terminator", "터미네이터"],
-  ["cat", "고양이"],
-  ["jensen", "젠슨"],
-  ["dust", "먼지"],
+  ["dog", "Dog"],
+  ["robot", "Robot"],
+  ["penguin", "Penguin"],
+  ["terminator", "Terminator"],
+  ["cat", "Cat"],
+  ["jensen", "Jensen Huang"],
+  ["dust", "Dust"],
 ];
