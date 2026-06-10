@@ -7,7 +7,9 @@
 // keeps CSS animations from resetting on every sessions-update and avoids the
 // flicker an innerHTML rebuild would cause.
 
-import { characterSvg } from "./character.js";
+import { STATE_COLOR } from "./character-spec.js";
+import { SpriteAnimator } from "./sprite-engine.js";
+import dogSheet from "./sprites/dog.js";
 import { escapeHtml, visualKey } from "./utils.js";
 import { buildForest, tierSize } from "./tree.js";
 import { ensureHarnessLayer, drawHarness } from "./harness.js";
@@ -38,17 +40,30 @@ function rootState(sessions) {
   return "idle";
 }
 
-/** Inner markup for a node (bubble + character + title). */
-function nodeInnerHTML(role, state, session) {
+/** Inner markup for a node (bubble + sprite host + title). */
+function nodeInnerHTML(role, session) {
   const size = tierSize(role);
-  const svg = characterSvg(state, { role });
   const bubble =
     session && session.summary
       ? `<div class="thought-bubble">${escapeHtml(session.summary)}</div>`
       : "";
   const titleText = session ? session.project_name : "Claude Code";
   const title = `<div class="node-title">${escapeHtml(titleText)}</div>`;
-  return `${bubble}<div class="char-wrap" style="width:${size}px;height:${size}px">${svg}</div>${title}`;
+  return `${bubble}<div class="char-wrap" style="width:${size}px;height:${size}px"></div>${title}`;
+}
+
+/** Create the node's SpriteAnimator on its char-wrap (root wears the collar). */
+function attachSprite(el, role, state) {
+  const wrap = el.querySelector(".char-wrap");
+  el._sprite = new SpriteAnimator(wrap, dogSheet, role === "root" ? { overlay: "collar" } : {});
+  setSpriteState(el, state);
+}
+
+/** Point the node's animator at the animation mapped to a visual state. */
+function setSpriteState(el, state) {
+  if (!el._sprite) return;
+  const key = STATE_COLOR[state] ? state : "idle";
+  el._sprite.setAnim(dogSheet.stateAnims[key] || "idle", STATE_COLOR[key]);
 }
 
 /** Create the root node once; it is always shown (AM-2). */
@@ -58,7 +73,8 @@ function ensureRoot(stage) {
   rootEl.className = "anim-node anim-root";
   rootEl.dataset.role = "root";
   rootEl.dataset.state = "idle";
-  rootEl.innerHTML = nodeInnerHTML("root", "idle", null);
+  rootEl.innerHTML = nodeInnerHTML("root", null);
+  attachSprite(rootEl, "root", "idle");
   stage.appendChild(rootEl);
   return rootEl;
 }
@@ -69,8 +85,7 @@ function updateRoot(sessions) {
   const state = rootState(sessions);
   if (rootEl.dataset.state !== state) {
     rootEl.dataset.state = state;
-    const wrap = rootEl.querySelector(".char-wrap");
-    if (wrap) wrap.innerHTML = characterSvg(state, { role: "root" });
+    setSpriteState(rootEl, state);
   }
 }
 
@@ -80,7 +95,8 @@ function createSessionNode(session, stage) {
   el.dataset.sessionId = session.id;
   el.dataset.role = "session";
   el.dataset.state = visualKey(session);
-  el.innerHTML = nodeInnerHTML("session", el.dataset.state, session);
+  el.innerHTML = nodeInnerHTML("session", session);
+  attachSprite(el, "session", el.dataset.state);
   el.addEventListener("click", () => onSelectFn && onSelectFn(session.id));
   // Drop the spawn class once it finishes so later reconciles don't replay it.
   el.addEventListener("animationend", () => el.classList.remove("anim-spawn"), {
@@ -95,8 +111,7 @@ function updateSessionNode(el, session) {
   const state = visualKey(session);
   if (el.dataset.state !== state) {
     el.dataset.state = state;
-    const wrap = el.querySelector(".char-wrap");
-    if (wrap) wrap.innerHTML = characterSvg(state, { role: "session" });
+    setSpriteState(el, state);
   }
   // Thought bubble (current work summary, AM-5).
   let bubble = el.querySelector(".thought-bubble");
@@ -124,6 +139,7 @@ function despawn(el) {
   const remove = () => {
     if (removed) return;
     removed = true;
+    if (el._sprite) el._sprite.destroy();
     el.remove();
   };
   el.classList.add("anim-despawn");
@@ -152,7 +168,8 @@ function ensureOverflowNode(stage) {
   overflowEl = document.createElement("div");
   overflowEl.className = "anim-node anim-overflow";
   overflowEl.dataset.role = "overflow";
-  overflowEl.innerHTML = `<div class="char-wrap">${characterSvg("idle", { role: "session" })}</div><div class="node-title overflow-count">+0</div>`;
+  overflowEl.innerHTML = `<div class="char-wrap"></div><div class="node-title overflow-count">+0</div>`;
+  attachSprite(overflowEl, "session", "idle");
   stage.appendChild(overflowEl);
   return overflowEl;
 }

@@ -278,6 +278,14 @@ body {
   }
 }
 
+/* ---- Frame-based pixel sprite (sprite-engine.js, GF-115) ---- */
+.spr {
+  display: block;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+}
+
 /* ---- Pixel character (SVG) ---- */
 .gf-char {
   display: block;
