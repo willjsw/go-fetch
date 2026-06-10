@@ -62,8 +62,16 @@ function wireResizeHandles() {
 
 /** Latest snapshot, kept so a card click can look its session up by id. */
 let currentSessions = [];
-/** Active render mode: 'cards' (default) | 'anim' (wired in GF-110+). */
-let currentMode = "cards";
+/** localStorage key for the persisted view mode (GF-110). */
+const MODE_KEY = "gofetch:mode";
+/** Active render mode: 'cards' (default) | 'anim'. Restored from localStorage. */
+let currentMode = (() => {
+  try {
+    return localStorage.getItem(MODE_KEY) === "anim" ? "anim" : "cards";
+  } catch (_err) {
+    return "cards";
+  }
+})();
 
 /** Replace the store snapshot and repaint the active mode. */
 function setSessions(sessions) {
@@ -71,28 +79,56 @@ function setSessions(sessions) {
   renderActiveMode();
 }
 
-/** Switch the active render mode and repaint (used by the mode tabs, GF-110). */
+/** Switch the active render mode, persist it, and repaint (mode tabs, GF-110). */
 export function setMode(mode) {
   currentMode = mode === "anim" ? "anim" : "cards";
+  try {
+    localStorage.setItem(MODE_KEY, currentMode);
+  } catch (_err) {
+    /* persistence is best-effort */
+  }
   renderActiveMode();
 }
 
 /**
- * Paint the current store snapshot using the active mode's renderer. An empty
- * list shows the empty state in cards mode (DI-6). Until the animated mode is
- * implemented (GF-110+) every mode falls back to cards.
+ * Paint the current store snapshot using the active mode's renderer. In cards
+ * mode an empty list shows the empty state (DI-6); in animated mode the stage
+ * takes over. The real character renderer is wired in GF-112 — until then the
+ * stage shows a placeholder so the tab is functional end-to-end.
  */
 function renderActiveMode() {
   const empty = document.getElementById("empty-state");
   const list = document.getElementById("sessions");
+  const stage = document.getElementById("stage");
   if (!empty || !list) return;
 
-  const hasSessions = currentSessions.length > 0;
-  empty.hidden = hasSessions;
-  list.hidden = !hasSessions;
-  renderCardsMode(list, currentSessions, showDetail);
+  updateTabUI();
+
+  if (currentMode === "anim") {
+    empty.hidden = true;
+    list.hidden = true;
+    if (stage) {
+      stage.hidden = false;
+      stage.innerHTML = '<p class="stage-placeholder">Animated mode — coming soon</p>';
+    }
+  } else {
+    if (stage) stage.hidden = true;
+    const hasSessions = currentSessions.length > 0;
+    empty.hidden = hasSessions;
+    list.hidden = !hasSessions;
+    renderCardsMode(list, currentSessions, showDetail);
+  }
 
   syncOpenDetail();
+}
+
+/** Reflect the active mode on the tab buttons (.active + aria-selected). */
+function updateTabUI() {
+  document.querySelectorAll(".mode-tab").forEach((btn) => {
+    const active = btn.dataset.mode === currentMode;
+    btn.classList.toggle("active", active);
+    btn.setAttribute("aria-selected", active ? "true" : "false");
+  });
 }
 
 /** Keep an open *detail* view (not the settings panel) in sync with new data. */
@@ -250,6 +286,11 @@ window.addEventListener("DOMContentLoaded", () => {
   if (emptyChar) emptyChar.innerHTML = characterSvg("idle");
   const gear = document.getElementById("gear");
   if (gear) gear.addEventListener("click", openSettings);
+
+  // Mode tabs (GF-110): switch view + persist the choice.
+  document.querySelectorAll(".mode-tab").forEach((btn) =>
+    btn.addEventListener("click", () => setMode(btn.dataset.mode)),
+  );
 
   // Window controls (WC-6): − hides to tray (restored via tray left-click),
   // × fully quits (Rust `quit_app` → app.exit → hook cleanup).

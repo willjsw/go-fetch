@@ -76,6 +76,53 @@ body {
   padding: 12px;
 }
 
+/* ---- Mode tabs (GF-110): Cards ↔ Animated, in the fixed chrome ---- */
+.mode-tabs {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 4px;
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.02);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.mode-tab {
+  flex: 1 1 auto;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+.mode-tab:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--accent);
+}
+.mode-tab.active {
+  background: rgba(255, 255, 255, 0.16);
+  color: var(--accent);
+}
+
+/* ---- Animated stage (GF-110 shell; renderer in GF-112) ---- */
+.stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+.stage-placeholder {
+  margin: 0;
+  text-align: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 /* ---- Pixel character (SVG) ---- */
 .gf-char {
   display: block;
@@ -165,7 +212,8 @@ body {
    wouldn't at equal specificity — without this, the empty state stays visible
    even when sessions are listed (GF-103). */
 .empty-state[hidden],
-.sessions[hidden] {
+.sessions[hidden],
+.stage[hidden] {
   display: none;
 }
 

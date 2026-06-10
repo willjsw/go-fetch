@@ -25,6 +25,14 @@
         </div>
       </header>
 
+      <!-- Mode tabs (GF-110): switch between the card list and the animated
+           character mode. Lives in the fixed chrome (between title bar and the
+           scrolling content) so it never scrolls away. -->
+      <nav class="mode-tabs" role="tablist" aria-label="View mode">
+        <button class="mode-tab active" type="button" role="tab" data-mode="cards" aria-selected="true">Cards</button>
+        <button class="mode-tab" type="button" role="tab" data-mode="anim" aria-selected="false">Animated</button>
+      </nav>
+
       <!-- Content area: scrolls independently of the title bar. -->
       <div class="content">
         <!-- Empty state (DI-6): shown when no Claude Code session is active. -->
@@ -36,6 +44,9 @@
 
         <!-- Session list (state machine + visualization). -->
         <section class="sessions" id="sessions" hidden></section>
+
+        <!-- Animated character stage (GF-110 shell; renderer wired in GF-112). -->
+        <section class="stage" id="stage" hidden></section>
       </div>
 
       <!-- Custom resize handles (WC-8). A frameless window has no native resize
