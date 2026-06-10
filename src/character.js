@@ -11,6 +11,8 @@ export const STATE_COLOR = {
   error: "#f87171",
   done: "#60a5fa",
   idle: "#9ca3af",
+  // SL-5 "detected but unconfirmed" — violet, distinct from the five states.
+  pending: "#a78bfa",
 };
 
 const BODY = "#f4f4f6"; // white character
@@ -64,7 +66,21 @@ const FEATURES = {
     <rect x="18" y="5" width="1" height="1" fill="#9ca3af"/>
     <rect x="17" y="6" width="1" height="1" fill="#9ca3af"/>
     <rect x="16" y="7" width="3" height="1" fill="#9ca3af"/>`,
+  // Neutral dot eyes + a violet "?" — detected, state unconfirmed (SL-5).
+  pending: `
+    <rect x="7" y="10" width="2" height="2" fill="${INK}"/>
+    <rect x="15" y="10" width="2" height="2" fill="${INK}"/>
+    <rect x="10" y="14" width="3" height="1" fill="#a78bfa"/>
+    <rect x="13" y="15" width="1" height="1" fill="#a78bfa"/>
+    <rect x="11" y="16" width="2" height="1" fill="#a78bfa"/>
+    <rect x="11" y="18" width="1" height="1" fill="#a78bfa"/>`,
 };
+
+// Two stubby pixel arms, one per side of the head. Rendered only in the
+// `working` state (WC-10/WC-11); the flapping motion is added in CSS (WC-11).
+const ARMS = `
+    <rect class="gf-arm gf-arm-l" x="1" y="11" width="2" height="4" fill="${BODY}"/>
+    <rect class="gf-arm gf-arm-r" x="21" y="11" width="2" height="4" fill="${BODY}"/>`;
 
 /**
  * Inline SVG for the character in a given state. Falls back to `idle`.
@@ -74,10 +90,16 @@ const FEATURES = {
 export function characterSvg(state) {
   const key = FEATURES[state] ? state : "idle";
   const color = STATE_COLOR[key];
+  // Head as a pixel-stepped square (1px corner cuts) instead of a smooth
+  // rounded rect — reads as dot/pixel art (WC-10). Same x3..21 / y4..20 bounds.
+  const head =
+    "M4,4 H20 V5 H21 V19 H20 V20 H4 V19 H3 V5 H4 Z";
+  const arms = key === "working" ? ARMS : ""; // arms only while working (WC-11)
   return `<svg class="gf-char gf-char-${key}" viewBox="0 0 24 24" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="${key}">
     <rect x="11" y="1" width="2" height="3" fill="${BODY}"/>
     <rect x="10" y="0" width="4" height="2" fill="${color}"/>
-    <rect x="3" y="4" width="18" height="16" rx="3" fill="${BODY}"/>
+    <path d="${head}" fill="${BODY}"/>
+    ${arms}
     ${FEATURES[key]}
   </svg>`;
 }
