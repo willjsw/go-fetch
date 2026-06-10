@@ -489,13 +489,18 @@ impl SessionManager {
         self.len() == 0
     }
 
-    /// Whether any session is in a non-idle state. Used for auto-hide (Task 14).
+    /// Whether any session warrants keeping the widget visible (auto-hide, WC-5).
+    /// A session counts as active if it is in any non-`Idle` state **or** is
+    /// `pending` (detected but unconfirmed, SL-5). A freshly-detected session is
+    /// not "idle/neglected", so it must keep the widget shown — otherwise
+    /// auto-hide would hide the widget while pre-existing sessions still read
+    /// "Detecting…", re-hiding it right after the tray re-opens it (GF-102).
     pub fn has_active(&self) -> bool {
         self.sessions
             .read()
             .expect("session lock poisoned")
             .values()
-            .any(|s| s.state != SessionState::Idle)
+            .any(|s| s.state != SessionState::Idle || s.pending)
     }
 }
 
@@ -806,6 +811,23 @@ mod tests {
         let summary = m.snapshot().remove(0).summary;
         assert!(summary.ends_with('…'));
         assert!(summary.chars().count() <= "running ".chars().count() + 49);
+    }
+
+    #[test]
+    fn has_active_counts_pending_but_not_idle() {
+        let m = SessionManager::with_idle_after(Duration::from_secs(0));
+        assert!(!m.has_active(), "no sessions → not active");
+
+        // A pending (Detecting) session keeps the widget shown, even though its
+        // underlying placeholder state is Idle (GF-102).
+        m.seed_pending("p", None, Instant::now());
+        assert!(m.has_active(), "a pending session must count as active");
+
+        // A session driven to a real Idle state (Done → idle) is NOT active.
+        let only_idle = SessionManager::with_idle_after(Duration::from_secs(0));
+        only_idle.handle_event(&event("d", "Stop"));
+        only_idle.tick_idle(); // idle_after = 0 → Done becomes Idle immediately
+        assert!(!only_idle.has_active(), "a purely Idle session is not active");
     }
 
     #[test]
