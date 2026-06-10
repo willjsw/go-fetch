@@ -88,6 +88,27 @@ pub struct HookEvent {
     pub error_type: Option<String>,
     #[serde(default)]
     pub error_message: Option<String>,
+
+    // --- SessionStart (verified spec, HOOK_SPEC_VERIFIED / PRD Sprint2 §2.1 F1) ---
+    /// How the session started: `startup` / `resume` / `clear` / `compact`.
+    #[serde(default)]
+    pub source: Option<String>,
+    /// Model id reported at session start.
+    #[serde(default)]
+    pub model: Option<String>,
+    /// Sub-agent type, present only inside sub-agents.
+    #[serde(default)]
+    pub agent_type: Option<String>,
+    /// Optional human-friendly session title.
+    #[serde(default)]
+    pub session_title: Option<String>,
+
+    // --- SessionEnd (verified spec, F2) ---
+    /// Why the session ended: `clear` / `resume` / `logout` /
+    /// `prompt_input_exit` / `bypass_permissions_disabled` / `other`. Unknown
+    /// values (e.g. an undocumented `exit`) are handled as `other` downstream.
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 /// `GET /health` — liveness probe used by the mock test harness (Task 9) and the
@@ -288,5 +309,28 @@ mod tests {
             .unwrap();
         let response = test_router().oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    /// SessionStart/SessionEnd lifecycle payloads parse with their verified
+    /// fields — `source`/`model` on start and `reason` on end (GF-81 / SL-1·2).
+    #[test]
+    fn deserializes_sessionstart_and_sessionend_fields() {
+        let start: HookEvent = serde_json::from_str(
+            r#"{"session_id":"s","hook_event_name":"SessionStart","source":"startup","model":"claude-sonnet-4-6","cwd":"/x/p"}"#,
+        )
+        .unwrap();
+        assert_eq!(start.source.as_deref(), Some("startup"));
+        assert_eq!(start.model.as_deref(), Some("claude-sonnet-4-6"));
+
+        let end: HookEvent = serde_json::from_str(
+            r#"{"session_id":"s","hook_event_name":"SessionEnd","reason":"clear"}"#,
+        )
+        .unwrap();
+        assert_eq!(end.reason.as_deref(), Some("clear"));
+
+        // Lifecycle events without their optional fields still parse (graceful).
+        let bare: HookEvent =
+            serde_json::from_str(r#"{"session_id":"s","hook_event_name":"SessionEnd"}"#).unwrap();
+        assert!(bare.reason.is_none());
     }
 }
