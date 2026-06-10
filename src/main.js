@@ -1,13 +1,15 @@
-// GoFetch widget frontend — Task 5 (GF-10) state visualization +
-// Task 10 (GF-15) click-through one-line summary detail view.
+// GoFetch widget frontend — store ↔ renderer split (Task 30 / GF-109).
 //
-// Receives session snapshots from the Rust backend over Tauri IPC and renders
-// one placeholder "character" card per session, colored/labelled by state.
-// Clicking a card opens a detail popover with the (Rust-generated, local-only)
-// one-line summary plus state, project, path, and elapsed time (DV-1/DV-3).
-// The real pixel-art character replaces the placeholder in Task 11 (GF-16).
+// Receives session snapshots from the Rust backend over Tauri IPC and keeps them
+// in a single store (`currentSessions`). A mode dispatcher (`renderActiveMode`)
+// draws the snapshot via the active mode's renderer — today the card list
+// (cards-mode.js), with the animated character mode wired in GF-110+. Clicking a
+// session opens a detail popover with the (Rust-generated, local-only) one-line
+// summary plus state, project, path, and elapsed time (DV-1/DV-3).
 
 import { characterSvg } from "./character.js";
+import { renderCardsMode } from "./cards-mode.js";
+import { STATE_VISUALS, visualKey, escapeHtml, formatElapsed } from "./utils.js";
 
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
@@ -51,53 +53,36 @@ function wireResizeHandles() {
   });
 }
 
-const STATE_VISUALS = {
-  working: { label: "Working", icon: "⚙" },
-  waiting: { label: "Waiting for you", icon: "⏳" },
-  error: { label: "Error", icon: "✕" },
-  done: { label: "Done", icon: "✓" },
-  idle: { label: "Idle", icon: "z" },
-  // SL-5: detected (e.g. pre-existing / just started) but state unconfirmed.
-  pending: { label: "Detecting…", icon: "?" },
-};
+// ---------------------------------------------------------------------------
+// Store: single source of truth for the current snapshot + active render mode.
+// `sessions-update` events and the initial `refresh()` only mutate the store;
+// `renderActiveMode()` is the one place that paints the DOM, so adding a new
+// mode (GF-110+) means adding a branch here, not a new IPC path.
+// ---------------------------------------------------------------------------
 
-/**
- * Visual key for a session: a `pending` session (polling-seeded or just
- * started, SL-5) shows the neutral "?" expression regardless of its underlying
- * placeholder state; otherwise the mapped state (fallback `idle`).
- */
-function visualKey(session) {
-  if (session && session.pending) return "pending";
-  return STATE_VISUALS[session.state] ? session.state : "idle";
-}
-
-// Latest snapshot, kept so a card click can look its session up by id.
+/** Latest snapshot, kept so a card click can look its session up by id. */
 let currentSessions = [];
+/** Active render mode: 'cards' (default) | 'anim' (wired in GF-110+). */
+let currentMode = "cards";
 
-function escapeHtml(value) {
-  return String(value ?? "").replace(
-    /[&<>"']/g,
-    (c) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c],
-  );
+/** Replace the store snapshot and repaint the active mode. */
+function setSessions(sessions) {
+  currentSessions = Array.isArray(sessions) ? sessions : [];
+  renderActiveMode();
 }
 
-/** Format elapsed-since-last-activity seconds compactly. */
-function formatElapsed(seconds) {
-  const s = Math.max(0, Math.floor(Number(seconds) || 0));
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ${s % 60}s`;
-  const h = Math.floor(m / 60);
-  return `${h}h ${m % 60}m`;
+/** Switch the active render mode and repaint (used by the mode tabs, GF-110). */
+export function setMode(mode) {
+  currentMode = mode === "anim" ? "anim" : "cards";
+  renderActiveMode();
 }
 
 /**
- * Render the session list. An empty list shows the empty state (DI-6).
- * @param {Array<object>} sessions
+ * Paint the current store snapshot using the active mode's renderer. An empty
+ * list shows the empty state in cards mode (DI-6). Until the animated mode is
+ * implemented (GF-110+) every mode falls back to cards.
  */
-function renderSessions(sessions = []) {
-  currentSessions = Array.isArray(sessions) ? sessions : [];
+function renderActiveMode() {
   const empty = document.getElementById("empty-state");
   const list = document.getElementById("sessions");
   if (!empty || !list) return;
@@ -105,41 +90,22 @@ function renderSessions(sessions = []) {
   const hasSessions = currentSessions.length > 0;
   empty.hidden = hasSessions;
   list.hidden = !hasSessions;
-  list.innerHTML = "";
+  renderCardsMode(list, currentSessions, showDetail);
 
-  for (const session of currentSessions) {
-    const state = visualKey(session);
-    const visual = STATE_VISUALS[state];
+  syncOpenDetail();
+}
 
-    const card = document.createElement("div");
-    card.className = `session-card state-${state}`;
-    card.dataset.sessionId = session.id;
-    card.title = "Click for details";
-    card.innerHTML = `
-      <div class="char state-${state}" aria-hidden="true">${characterSvg(state)}</div>
-      <div class="meta">
-        <div class="project">${escapeHtml(session.project_name)}</div>
-        <div class="state-line">
-          <span class="state-label">${visual.label}</span>
-          <span class="hint">${escapeHtml(session.summary)}</span>
-        </div>
-        <div class="elapsed">${formatElapsed(session.idle_seconds)}</div>
-      </div>`;
-    card.addEventListener("click", () => showDetail(session.id));
-    list.appendChild(card);
-  }
-
-  // Keep an open *detail* view (not the settings panel) in sync with new data.
+/** Keep an open *detail* view (not the settings panel) in sync with new data. */
+function syncOpenDetail() {
   const open = document.querySelector(".detail-backdrop[data-session-id]");
-  if (open) {
-    const id = open.dataset.sessionId;
-    if (currentSessions.some((s) => s.id === id)) showDetail(id);
-    else closeDetail();
-  }
+  if (!open) return;
+  const id = open.dataset.sessionId;
+  if (currentSessions.some((s) => s.id === id)) showDetail(id);
+  else closeDetail();
 }
 
 /** Settings panel: per-type notification toggles (NT-3 / Task 12). */
-async function openSettings() {
+export async function openSettings() {
   let settings;
   let autostart = false;
   try {
@@ -212,7 +178,7 @@ async function openSettings() {
 }
 
 /** Show the detail popover for a session (DV-1/DV-3). */
-function showDetail(sessionId) {
+export function showDetail(sessionId) {
   const session = currentSessions.find((s) => s.id === sessionId);
   if (!session) return;
   closeDetail();
@@ -267,15 +233,15 @@ function showDetail(sessionId) {
   document.body.appendChild(backdrop);
 }
 
-function closeDetail() {
+export function closeDetail() {
   document.querySelectorAll(".detail-backdrop").forEach((el) => el.remove());
 }
 
 async function refresh() {
   try {
-    renderSessions(await invoke("get_sessions"));
+    setSessions(await invoke("get_sessions"));
   } catch (_err) {
-    renderSessions([]);
+    setSessions([]);
   }
 }
 
@@ -305,7 +271,7 @@ window.addEventListener("DOMContentLoaded", () => {
   wireResizeHandles();
 
   refresh();
-  listen("sessions-update", (event) => renderSessions(event.payload));
+  listen("sessions-update", (event) => setSessions(event.payload));
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") closeDetail();
   });
