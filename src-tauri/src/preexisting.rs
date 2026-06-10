@@ -21,6 +21,7 @@
 //! schema varies by version (F9), so the parser is deliberately lenient: every
 //! field optional, unknown fields ignored, malformed output → empty list.
 
+use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
 
@@ -63,13 +64,40 @@ pub fn parse_agents_json(out: &str) -> Vec<AgentEntry> {
         .collect()
 }
 
+/// Resolve the `claude` executable. Under `npm` / `tauri dev` (and GUI launches
+/// from Finder/Dock) the inherited PATH often omits Homebrew and user bin dirs
+/// — e.g. `/opt/homebrew/bin` is absent, so a bare `Command::new("claude")`
+/// fails to spawn and pre-existing detection silently does nothing (GF-100).
+/// Probe the common absolute install locations first; fall back to a PATH lookup.
+fn claude_command() -> PathBuf {
+    let mut candidates = vec![
+        PathBuf::from("/opt/homebrew/bin/claude"), // Homebrew (Apple silicon)
+        PathBuf::from("/usr/local/bin/claude"),    // Homebrew (Intel) / manual
+    ];
+    if let Some(home) = std::env::var_os("HOME") {
+        let home = PathBuf::from(home);
+        candidates.push(home.join(".claude/local/claude"));
+        candidates.push(home.join(".local/bin/claude"));
+        candidates.push(home.join("bin/claude"));
+    }
+    candidates
+        .into_iter()
+        .find(|p| p.is_file())
+        .unwrap_or_else(|| PathBuf::from("claude")) // last resort: rely on PATH
+}
+
 /// Run `claude agents --json` as a child process and return the active sessions.
 /// Best-effort: missing CLI, timeout, non-zero exit, or malformed JSON all yield
 /// an empty list so the caller degrades to hook-only (DI-4). `stdin` is null so
-/// the command can never block on a prompt.
+/// the command can never block on a prompt. The child PATH is augmented with the
+/// common bin dirs so both the resolved binary and anything it shells out to are
+/// found regardless of how GoFetch itself was launched (GF-100).
 pub async fn poll_active_sessions() -> Vec<AgentEntry> {
-    let output = tokio::process::Command::new("claude")
+    let bin = claude_command();
+    let path = std::env::var("PATH").unwrap_or_default();
+    let output = tokio::process::Command::new(&bin)
         .args(["agents", "--json"])
+        .env("PATH", format!("{path}:/opt/homebrew/bin:/usr/local/bin"))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -78,8 +106,26 @@ pub async fn poll_active_sessions() -> Vec<AgentEntry> {
         Ok(Ok(out)) if out.status.success() => {
             parse_agents_json(&String::from_utf8_lossy(&out.stdout))
         }
-        // Timeout, spawn error (CLI absent), or non-zero exit → degrade silently.
-        _ => Vec::new(),
+        // Degrade to hook-only on any failure, but log it so the cause is
+        // diagnosable in dev (these were previously silent — GF-100).
+        Ok(Ok(out)) => {
+            eprintln!(
+                "[gofetch] `claude agents --json` exited with {:?}; pre-existing detection skipped",
+                out.status.code()
+            );
+            Vec::new()
+        }
+        Ok(Err(e)) => {
+            eprintln!(
+                "[gofetch] could not run `{}`: {e}; pre-existing detection disabled",
+                bin.display()
+            );
+            Vec::new()
+        }
+        Err(_) => {
+            eprintln!("[gofetch] `claude agents --json` timed out; pre-existing detection skipped");
+            Vec::new()
+        }
     }
 }
 
