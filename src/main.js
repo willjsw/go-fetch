@@ -30,9 +30,9 @@ async function applyMaxSize() {
     const logW = mon.size.width / sf;
     const logH = mon.size.height / sf;
     // Cap at 1/4 of the screen area, but never below the default window size
-    // (360×600, WC-12) — otherwise on laptops where half the screen height is
-    // < 600 the default would be clamped and the window would shrink on launch.
-    const maxW = Math.max(360, Math.floor(logW * 0.5));
+    // (410×600, WC-12). The width floor (410) also matches minWidth so the max
+    // can't fall under the resize floor on small screens; min height is 400.
+    const maxW = Math.max(410, Math.floor(logW * 0.5));
     const maxH = Math.max(600, Math.floor(logH * 0.5));
     await getCurrentWindow().setMaxSize(new LogicalSize(maxW, maxH));
   } catch (_err) {

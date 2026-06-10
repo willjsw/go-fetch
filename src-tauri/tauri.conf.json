@@ -13,10 +13,10 @@
       {
         "label": "main",
         "title": "GoFetch",
-        "width": 360,
+        "width": 410,
         "height": 600,
-        "minWidth": 180,
-        "minHeight": 220,
+        "minWidth": 410,
+        "minHeight": 400,
         "resizable": true,
         "transparent": true,
         "decorations": false,
