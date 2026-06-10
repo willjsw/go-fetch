@@ -18,8 +18,12 @@ use std::path::PathBuf;
 use serde_json::{json, Map, Value};
 
 /// Events GoFetch subscribes to, with optional matcher per group.
-/// `None` matcher fires on all (tool events) or has no matcher (Stop family).
-const TOOL_AND_LIFECYCLE_EVENTS: [&str; 5] = [
+/// `None` matcher fires on all (tool events) or has no matcher (Stop / Session
+/// family). `SessionStart`/`SessionEnd` drive the widget's session lifecycle
+/// (SL-1/SL-2): the card appears on start and is cleared on end.
+const TOOL_AND_LIFECYCLE_EVENTS: [&str; 7] = [
+    "SessionStart",
+    "SessionEnd",
     "Stop",
     "StopFailure",
     "PreToolUse",
@@ -250,7 +254,15 @@ mod tests {
         assert_eq!(handler["timeout"], 5);
         assert!(handler.get("async").is_none());
 
-        for event in ["Stop", "StopFailure", "PreToolUse", "PostToolUse", "UserPromptSubmit"] {
+        for event in [
+            "SessionStart",
+            "SessionEnd",
+            "Stop",
+            "StopFailure",
+            "PreToolUse",
+            "PostToolUse",
+            "UserPromptSubmit",
+        ] {
             assert!(settings["hooks"][event].is_array(), "missing event {event}");
         }
     }
@@ -335,6 +347,9 @@ mod tests {
         // GoFetch-only events were pruned entirely.
         assert!(settings["hooks"].get("Notification").is_none());
         assert!(settings["hooks"].get("StopFailure").is_none());
+        // SE-4: lifecycle events GoFetch added are cleaned up too.
+        assert!(settings["hooks"].get("SessionStart").is_none());
+        assert!(settings["hooks"].get("SessionEnd").is_none());
     }
 
     #[test]
@@ -360,7 +375,7 @@ mod tests {
 
         let reloaded = load(&path).unwrap();
         assert_eq!(reloaded["existing"], true);
-        assert_eq!(count_gofetch_handlers(&reloaded), 7); // 2 Notification + 5 others
+        assert_eq!(count_gofetch_handlers(&reloaded), 9); // 2 Notification + 7 others
 
         let mut cleaned = reloaded;
         apply_unregister(&mut cleaned);
