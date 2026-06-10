@@ -128,6 +128,14 @@ body {
   50% { transform: translateY(-2px); }
 }
 
+/* The `hidden` attribute must win over the `display:flex` rules below, which it
+   wouldn't at equal specificity — without this, the empty state stays visible
+   even when sessions are listed (GF-103). */
+.empty-state[hidden],
+.sessions[hidden] {
+  display: none;
+}
+
 /* ---- Empty state (DI-6) ---- */
 .empty-state {
   margin: auto;
