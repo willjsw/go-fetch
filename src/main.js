@@ -198,7 +198,7 @@ export async function openSettings() {
     <label class="toggle"><input type="checkbox" class="settings-toggle" data-key="always_on_top" ${w.always_on_top ? "checked" : ""}/> Always on top</label>
     <label class="toggle"><input type="checkbox" class="settings-toggle" data-key="auto_hide" ${w.auto_hide ? "checked" : ""}/> Auto-hide when idle</label>
     <div class="settings-group">Character</div>
-    <label class="toggle">캐릭터
+    <label class="toggle">Character
       <select id="character-select" class="char-select">
         ${CHARACTER_LABELS.map(
           ([id, label]) =>
