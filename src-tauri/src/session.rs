@@ -567,6 +567,22 @@ mod tests {
     }
 
     #[test]
+    fn polling_seed_then_hook_confirms_state() {
+        // SL-5 full flow: poll seeds a pending session → a real hook arrives →
+        // state is confirmed and `pending` cleared (hook always wins).
+        let m = SessionManager::new();
+        assert!(m.seed_pending("s", Some("/x/proj".into()), Instant::now()));
+        assert!(m.snapshot()[0].pending, "seeded session starts unconfirmed");
+        m.handle_event(&event_json(serde_json::json!({
+            "session_id": "s", "hook_event_name": "Notification",
+            "notification_type": "permission_prompt"
+        })));
+        let snap = m.snapshot();
+        assert!(!snap[0].pending, "the real hook confirms and clears pending");
+        assert_eq!(snap[0].state, SessionState::Waiting);
+    }
+
+    #[test]
     fn session_end_removes_session() {
         let m = SessionManager::new();
         m.handle_event(&event("s", "Stop"));
