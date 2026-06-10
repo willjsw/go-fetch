@@ -90,6 +90,14 @@ pub struct Session {
     /// (DV-2), filled at snapshot time. Generated and shown locally only; never
     /// transmitted anywhere (PC-1/PC-2).
     pub summary: String,
+    /// Whether the session's current activity state is still **unconfirmed**
+    /// (SL-1/SL-5). Set when we know the session exists — via `SessionStart`, or
+    /// later via pre-existing detection (SL-4) — but no real activity event has
+    /// arrived yet to pin down its state. While `pending`, the widget shows a
+    /// neutral "detected" expression and **no notification fires**; the first
+    /// real hook event clears it. The five-state engine is unchanged: `pending`
+    /// is a display-layer flag layered on a non-notifiable underlying state.
+    pub pending: bool,
     /// Instant of the last event for this session. Not serialized.
     #[serde(skip)]
     pub last_activity: Instant,
@@ -112,6 +120,7 @@ impl Session {
             error_type: None,
             idle_seconds: 0,
             summary: String::new(),
+            pending: false,
             last_activity: now,
         }
     }
@@ -119,6 +128,10 @@ impl Session {
     /// Build the one-line current-task summary (DV-2). Pure, local string
     /// generation from already-captured fields — does no I/O and sends nothing.
     pub fn generate_summary(&self) -> String {
+        if self.pending {
+            // State not yet confirmed (just started / pre-existing) — SL-5.
+            return "detected — awaiting activity".to_string();
+        }
         match self.state {
             SessionState::Working => match (self.last_tool.as_deref(), self.last_tool_input.as_ref()) {
                 (Some(tool), Some(input)) => summarize_tool(tool, input),
@@ -213,6 +226,19 @@ fn map_event_to_state(event: &HookEvent) -> Option<SessionState> {
     }
 }
 
+/// Outcome of ingesting one hook event. Distinguishes a state change/creation
+/// from a session **removal** (so the UI refreshes when a card disappears) and
+/// from a no-op (so we don't churn the widget on irrelevant events).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EventOutcome {
+    /// The session was created or its state changed; carries the new state.
+    Changed(SessionState),
+    /// The session ended and was removed (`SessionEnd`).
+    Removed,
+    /// The event did not affect any tracked session.
+    Ignored,
+}
+
 /// Thread-safe manager of all monitored sessions.
 #[derive(Clone)]
 pub struct SessionManager {
@@ -238,17 +264,60 @@ impl SessionManager {
         }
     }
 
-    /// Ingest a hook event and update the corresponding session. Returns the new
-    /// state if the event changed/affected it, or `None` if the event is not
-    /// state-affecting. Uses a monotonic clock injected as `now` for testability.
-    pub fn handle_event_at(&self, event: &HookEvent, now: Instant) -> Option<SessionState> {
-        let mapped = map_event_to_state(event)?;
+    /// Ingest a hook event and update the corresponding session. Lifecycle
+    /// events are handled specially: `SessionStart` creates the session in a
+    /// neutral `pending` state (SL-1), `SessionEnd` removes it (SL-2). All other
+    /// events map to one of the five states as before. Uses a monotonic clock
+    /// injected as `now` for testability.
+    pub fn handle_event_at(&self, event: &HookEvent, now: Instant) -> EventOutcome {
+        match event.hook_event_name.as_str() {
+            "SessionStart" => {
+                let mut sessions = self.sessions.write().expect("session lock poisoned");
+                let is_new = !sessions.contains_key(&event.session_id);
+                let session = sessions
+                    .entry(event.session_id.clone())
+                    .or_insert_with(|| Session::new(&event.session_id, event.cwd.clone(), now));
+                session.last_activity = now;
+                if let Some(cwd) = &event.cwd {
+                    session.cwd = Some(cwd.clone());
+                    session.project_name = project_name_from_cwd(cwd);
+                }
+                // Only a brand-new session starts unconfirmed; a SessionStart for
+                // a session we already track (resume/clear/compact) keeps its
+                // state so we don't flicker an active session back to neutral.
+                if is_new {
+                    session.pending = true;
+                    session.state = SessionState::Idle; // non-notifiable neutral
+                }
+                return EventOutcome::Changed(session.state);
+            }
+            "SessionEnd" => {
+                let removed = self
+                    .sessions
+                    .write()
+                    .expect("session lock poisoned")
+                    .remove(&event.session_id)
+                    .is_some();
+                return if removed {
+                    EventOutcome::Removed
+                } else {
+                    EventOutcome::Ignored
+                };
+            }
+            _ => {}
+        }
+
+        let Some(mapped) = map_event_to_state(event) else {
+            return EventOutcome::Ignored;
+        };
         let mut sessions = self.sessions.write().expect("session lock poisoned");
         let session = sessions
             .entry(event.session_id.clone())
             .or_insert_with(|| Session::new(&event.session_id, event.cwd.clone(), now));
 
         session.last_activity = now;
+        // A real activity event confirms the session's state (clears SL-5 pending).
+        session.pending = false;
         if let Some(cwd) = &event.cwd {
             session.cwd = Some(cwd.clone());
             session.project_name = project_name_from_cwd(cwd);
@@ -271,11 +340,11 @@ impl SessionManager {
             _ => {}
         }
         session.state = mapped;
-        Some(mapped)
+        EventOutcome::Changed(mapped)
     }
 
     /// Convenience wrapper using the current instant.
-    pub fn handle_event(&self, event: &HookEvent) -> Option<SessionState> {
+    pub fn handle_event(&self, event: &HookEvent) -> EventOutcome {
         self.handle_event_at(event, Instant::now())
     }
 
@@ -373,12 +442,13 @@ mod tests {
 
     #[test]
     fn maps_each_event_to_expected_state() {
+        use EventOutcome::Changed;
         let m = SessionManager::new();
-        assert_eq!(m.handle_event(&event("s", "PreToolUse")), Some(SessionState::Working));
-        assert_eq!(m.handle_event(&event("s", "PostToolUse")), Some(SessionState::Working));
-        assert_eq!(m.handle_event(&event("s", "StopFailure")), Some(SessionState::Error));
-        assert_eq!(m.handle_event(&event("s", "Stop")), Some(SessionState::Done));
-        assert_eq!(m.handle_event(&event("s", "UserPromptSubmit")), Some(SessionState::Working));
+        assert_eq!(m.handle_event(&event("s", "PreToolUse")), Changed(SessionState::Working));
+        assert_eq!(m.handle_event(&event("s", "PostToolUse")), Changed(SessionState::Working));
+        assert_eq!(m.handle_event(&event("s", "StopFailure")), Changed(SessionState::Error));
+        assert_eq!(m.handle_event(&event("s", "Stop")), Changed(SessionState::Done));
+        assert_eq!(m.handle_event(&event("s", "UserPromptSubmit")), Changed(SessionState::Working));
     }
 
     #[test]
@@ -388,28 +458,73 @@ mod tests {
             "session_id": "s", "hook_event_name": "Notification",
             "notification_type": "permission_prompt"
         }));
-        assert_eq!(m.handle_event(&perm), Some(SessionState::Waiting));
+        assert_eq!(m.handle_event(&perm), EventOutcome::Changed(SessionState::Waiting));
 
         let idle = event_json(serde_json::json!({
             "session_id": "s", "hook_event_name": "Notification",
             "notification_type": "idle_prompt"
         }));
-        assert_eq!(m.handle_event(&idle), Some(SessionState::Waiting));
+        assert_eq!(m.handle_event(&idle), EventOutcome::Changed(SessionState::Waiting));
 
         // Non-monitored notification types do not change state.
         let auth = event_json(serde_json::json!({
             "session_id": "s", "hook_event_name": "Notification",
             "notification_type": "auth_success"
         }));
-        assert_eq!(m.handle_event(&auth), None);
+        assert_eq!(m.handle_event(&auth), EventOutcome::Ignored);
     }
 
     #[test]
     fn unknown_events_are_ignored() {
         let m = SessionManager::new();
-        assert_eq!(m.handle_event(&event("s", "SessionStart")), None);
-        assert_eq!(m.handle_event(&event("s", "FileChanged")), None);
+        // Genuinely unmapped lifecycle/other events create nothing.
+        assert_eq!(m.handle_event(&event("s", "FileChanged")), EventOutcome::Ignored);
+        assert_eq!(m.handle_event(&event("s", "CwdChanged")), EventOutcome::Ignored);
         assert!(m.is_empty(), "ignored events must not create sessions");
+    }
+
+    #[test]
+    fn session_start_creates_pending_session() {
+        let m = SessionManager::new();
+        let ev = event_json(serde_json::json!({
+            "session_id": "s", "hook_event_name": "SessionStart",
+            "source": "startup", "cwd": "/x/proj"
+        }));
+        assert!(matches!(m.handle_event(&ev), EventOutcome::Changed(_)));
+        let snap = m.snapshot();
+        assert_eq!(snap.len(), 1);
+        assert!(snap[0].pending, "a freshly started session is unconfirmed (SL-1)");
+        assert_eq!(snap[0].project_name, "proj");
+        assert!(!snap[0].state.is_notifiable(), "pending session must never notify");
+        assert_eq!(snap[0].summary, "detected — awaiting activity");
+    }
+
+    #[test]
+    fn real_event_clears_pending() {
+        let m = SessionManager::new();
+        m.handle_event(&event("s", "SessionStart"));
+        assert!(m.snapshot()[0].pending);
+        m.handle_event(&event_json(serde_json::json!({
+            "session_id": "s", "hook_event_name": "PreToolUse",
+            "tool_name": "Bash", "tool_input": {"command": "ls"}
+        })));
+        let snap = m.snapshot();
+        assert!(!snap[0].pending, "a real activity event confirms the state (SL-5)");
+        assert_eq!(snap[0].state, SessionState::Working);
+    }
+
+    #[test]
+    fn session_end_removes_session() {
+        let m = SessionManager::new();
+        m.handle_event(&event("s", "Stop"));
+        assert_eq!(m.len(), 1);
+        assert_eq!(m.handle_event(&event("s", "SessionEnd")), EventOutcome::Removed);
+        assert!(m.is_empty(), "SessionEnd removes the session entirely (SL-2)");
+        assert_eq!(
+            m.handle_event(&event("s", "SessionEnd")),
+            EventOutcome::Ignored,
+            "ending an unknown session is a no-op"
+        );
     }
 
     #[test]

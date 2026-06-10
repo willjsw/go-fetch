@@ -25,7 +25,7 @@ use axum::{
 };
 use serde::Deserialize;
 
-use crate::session::SessionManager;
+use crate::session::{EventOutcome, SessionManager};
 
 /// Invoked after each state-affecting event (and idle transition) so the widget
 /// UI can refresh. `lib.rs` supplies a closure that emits the session snapshot
@@ -129,13 +129,15 @@ async fn handle_event(
     match payload {
         Ok(Json(event)) => {
             // Feed the session state machine (Task 4) and refresh the UI (Task 5).
-            let new_state = state.manager.handle_event(&event);
-            if new_state.is_some() {
+            // Any outcome except `Ignored` changed the tracked set (state change,
+            // creation, or removal) and warrants a widget refresh.
+            let outcome = state.manager.handle_event(&event);
+            if !matches!(outcome, EventOutcome::Ignored) {
                 (state.notify)(&event.session_id);
             }
             eprintln!(
-                "[gofetch] event session_id={} hook_event_name={} -> state={:?}",
-                event.session_id, event.hook_event_name, new_state
+                "[gofetch] event session_id={} hook_event_name={} -> {:?}",
+                event.session_id, event.hook_event_name, outcome
             );
             StatusCode::OK
         }
