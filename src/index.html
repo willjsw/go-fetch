@@ -15,7 +15,10 @@
            − hides to tray (restored via tray left-click); × fully quits. -->
       <header class="titlebar" data-tauri-drag-region>
         <button class="gear" id="gear" type="button" title="Settings" aria-label="Settings">⚙</button>
-        <span class="title">GoFetch</span>
+        <!-- The title also carries the drag region: `data-tauri-drag-region`
+             only applies to the element it's on, and this span fills the bar's
+             center, so without it most of the title bar wouldn't be draggable. -->
+        <span class="title" data-tauri-drag-region>GoFetch</span>
         <div class="winctl">
           <button class="winctl-btn min" id="win-min" type="button" title="Hide (tray로 복원)" aria-label="Hide">−</button>
           <button class="winctl-btn close" id="win-close" type="button" title="Quit GoFetch" aria-label="Quit">×</button>
