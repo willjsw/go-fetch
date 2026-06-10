@@ -9,24 +9,31 @@
   </head>
 
   <body>
-    <main class="widget" id="app" data-tauri-drag-region>
-      <!-- Window controls (WC-6). Children of the drag region, so they stay
-           clickable (data-tauri-drag-region only affects the element it's on).
+    <main class="widget" id="app">
+      <!-- Title bar (WC-6): the drag handle + window controls, visually split
+           from the content below by a divider so buttons never overlap cards.
            − hides to tray (restored via tray left-click); × fully quits. -->
-      <div class="winctl">
-        <button class="winctl-btn min" id="win-min" type="button" title="Hide (tray로 복원)" aria-label="Hide">−</button>
-        <button class="winctl-btn close" id="win-close" type="button" title="Quit GoFetch" aria-label="Quit">×</button>
-      </div>
-      <button class="gear" id="gear" type="button" title="Settings" aria-label="Settings">⚙</button>
-      <!-- Empty state (DI-6): shown when no Claude Code session is active. -->
-      <section class="empty-state" id="empty-state">
-        <div class="char-lg" id="empty-char" aria-hidden="true"></div>
-        <p class="empty-title">No active sessions</p>
-        <p class="empty-sub">Monitoring for Claude Code…</p>
-      </section>
+      <header class="titlebar" data-tauri-drag-region>
+        <button class="gear" id="gear" type="button" title="Settings" aria-label="Settings">⚙</button>
+        <span class="title">GoFetch</span>
+        <div class="winctl">
+          <button class="winctl-btn min" id="win-min" type="button" title="Hide (tray로 복원)" aria-label="Hide">−</button>
+          <button class="winctl-btn close" id="win-close" type="button" title="Quit GoFetch" aria-label="Quit">×</button>
+        </div>
+      </header>
 
-      <!-- Session list (filled by later tasks: state machine + visualization). -->
-      <section class="sessions" id="sessions" hidden></section>
+      <!-- Content area: scrolls independently of the title bar. -->
+      <div class="content">
+        <!-- Empty state (DI-6): shown when no Claude Code session is active. -->
+        <section class="empty-state" id="empty-state">
+          <div class="char-lg" id="empty-char" aria-hidden="true"></div>
+          <p class="empty-title">No active sessions</p>
+          <p class="empty-sub">Monitoring for Claude Code…</p>
+        </section>
+
+        <!-- Session list (state machine + visualization). -->
+        <section class="sessions" id="sessions" hidden></section>
+      </div>
 
       <!-- Custom resize handles (WC-8). A frameless window has no native resize
            grips (Tauri #8519), so edges/corners trigger startResizeDragging.
