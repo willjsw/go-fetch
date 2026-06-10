@@ -313,6 +313,47 @@ mod tests {
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
+    /// End-to-end session lifecycle through the HTTP router (GF-95 regression).
+    /// A session is created `pending` on SessionStart (SL-1), confirmed Working
+    /// by a real tool event (SL-5 hook-first), and removed on SessionEnd —
+    /// including an undocumented `reason` value, which must still remove (SL-2).
+    #[tokio::test]
+    async fn lifecycle_pipeline_create_confirm_end() {
+        let manager = SessionManager::new();
+        let notify: UpdateNotifier = Arc::new(|_: &str| {});
+
+        let send = |body: &'static str| {
+            let app = router(manager.clone(), notify.clone());
+            async move {
+                let req = Request::builder()
+                    .method("POST")
+                    .uri("/event")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap();
+                app.oneshot(req).await.unwrap().status()
+            }
+        };
+
+        // SessionStart → a pending card is created (SL-1).
+        assert_eq!(
+            send(r#"{"session_id":"s","hook_event_name":"SessionStart","source":"startup","cwd":"/x/proj"}"#).await,
+            StatusCode::OK
+        );
+        assert_eq!(manager.len(), 1);
+        assert!(manager.snapshot()[0].pending, "SessionStart seeds a pending card");
+
+        // A real tool event confirms Working and clears pending (hook-first).
+        send(r#"{"session_id":"s","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls"}}"#).await;
+        let snap = manager.snapshot();
+        assert!(!snap[0].pending);
+        assert_eq!(snap[0].state, crate::session::SessionState::Working);
+
+        // SessionEnd with an undocumented reason ("exit") still removes (SL-2).
+        send(r#"{"session_id":"s","hook_event_name":"SessionEnd","reason":"exit"}"#).await;
+        assert!(manager.is_empty(), "SessionEnd clears the card end-to-end");
+    }
+
     /// SessionStart/SessionEnd lifecycle payloads parse with their verified
     /// fields — `source`/`model` on start and `reason` on end (GF-81 / SL-1·2).
     #[test]
