@@ -7,7 +7,9 @@
 // session opens a detail popover with the (Rust-generated, local-only) one-line
 // summary plus state, project, path, and elapsed time (DV-1/DV-3).
 
-import { characterSvg } from "./character.js";
+import { STATE_COLOR } from "./character-spec.js";
+import { SpriteAnimator } from "./sprite-engine.js";
+import dogSheet from "./sprites/dog.js";
 import { renderCardsMode } from "./cards-mode.js";
 import { renderAnimMode } from "./anim-mode.js";
 import { STATE_VISUALS, visualKey, escapeHtml, formatElapsed } from "./utils.js";
@@ -138,19 +140,7 @@ function renderActiveMode() {
     renderCardsMode(list, topLevel, showDetail);
   }
 
-  updateMotionState();
   syncOpenDetail();
-}
-
-/**
- * Pause ambient bounce only when everything is calm (G1): the stage goes
- * "quiet" when every session is idle/pending. Anything else — working, and
- * especially done/waiting/error — keeps bouncing so a finished, waiting, or
- * errored session stays eye-catching. The idle nap and root float remain.
- */
-function updateMotionState() {
-  const active = currentSessions.some((s) => !s.pending && s.state !== "idle");
-  document.body.classList.toggle("gf-quiet", !active);
 }
 
 /** Reflect the active mode on the tab buttons (.active + aria-selected). */
@@ -273,7 +263,7 @@ export function showDetail(sessionId) {
   const popover = document.createElement("div");
   popover.className = `detail-popover state-${state}`;
   popover.innerHTML = `
-    <div class="detail-head"><div class="char state-${state}">${characterSvg(state)}</div></div>
+    <div class="detail-head"><div class="char state-${state}"></div></div>
     <div class="detail-summary">${escapeHtml(session.summary)}</div>
     <dl class="detail-meta">
       <div><dt>State</dt><dd>${visual.label}</dd></div>
@@ -283,6 +273,9 @@ export function showDetail(sessionId) {
     </dl>
     <button class="detail-close" type="button">Close</button>
     ${canStop ? '<button class="detail-stop" type="button">Stop monitoring</button>' : ""}`;
+  // Live sprite in the popover head — destroyed by closeDetail (GF-116).
+  detailSprite = new SpriteAnimator(popover.querySelector(".detail-head .char"), dogSheet);
+  detailSprite.setAnim(dogSheet.stateAnims[state] || "idle", STATE_COLOR[state]);
   popover.querySelector(".detail-close").addEventListener("click", closeDetail);
   const stopBtn = popover.querySelector(".detail-stop");
   if (stopBtn)
@@ -300,7 +293,14 @@ export function showDetail(sessionId) {
   document.body.appendChild(backdrop);
 }
 
+/** Animator for the open detail popover's character (null when closed). */
+let detailSprite = null;
+
 export function closeDetail() {
+  if (detailSprite) {
+    detailSprite.destroy();
+    detailSprite = null;
+  }
   document.querySelectorAll(".detail-backdrop").forEach((el) => el.remove());
 }
 
@@ -313,8 +313,12 @@ async function refresh() {
 }
 
 window.addEventListener("DOMContentLoaded", () => {
+  // The empty-state dog naps with a live sprite too (GF-116). The animator
+  // lives for the app's lifetime; the shared ticker pauses it when hidden.
   const emptyChar = document.getElementById("empty-char");
-  if (emptyChar) emptyChar.innerHTML = characterSvg("idle");
+  if (emptyChar) {
+    new SpriteAnimator(emptyChar, dogSheet).setAnim("sleep", STATE_COLOR.idle);
+  }
   const gear = document.getElementById("gear");
   if (gear) gear.addEventListener("click", openSettings);
 

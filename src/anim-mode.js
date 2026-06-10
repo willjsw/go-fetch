@@ -1,37 +1,55 @@
-// Animated character mode renderer (Task 33 / GF-112) — Layer 1.
+// Animated character mode — free-roaming pseudo-3D stage (GF-116).
 //
-// Draws the always-present root Fetchy plus one child per Claude Code session,
-// connected by harness leashes (harness.js). Uses **id-key reconcile** (AM-8
-// G2): the #stage is never wiped — nodes are created once (spawn), patched in
-// place on updates, and removed (despawn) only when their session ends. This
-// keeps CSS animations from resetting on every sessions-update and avoids the
-// flicker an innerHTML rebuild would cause.
+// Characters live on a logical floor plane: position is (u, v) with u ∈ [0,1]
+// across the stage and v ∈ [0,1] in DEPTH (0 = far, 1 = near). Projection maps
+// depth to screen y, sprite scale, and z-index, so dogs further "back" draw
+// smaller, higher, and behind — a 3D composition while every sprite stays flat
+// 2D pixel art. Each character strolls (유유히 산책) under a per-state behavior
+// table, children stay leashed near their parent (the relation reads without a
+// fixed layout), a separation pass keeps nodes from overlapping, and the user
+// can pick a character up and drop it anywhere (drag = move, click = detail).
+//
+// Reconcile stays id-keyed (AM-8 G2): nodes spawn once, are patched in place,
+// and despawn when their session ends — logical (u,v) positions survive both
+// resizes (relative coords) and re-renders.
 
-import { STATE_COLOR } from "./character-spec.js";
+import { STATE_COLOR, SIZE_TIERS } from "./character-spec.js";
 import { SpriteAnimator } from "./sprite-engine.js";
 import dogSheet from "./sprites/dog.js";
 import { escapeHtml, visualKey } from "./utils.js";
-import { buildForest, tierSize } from "./tree.js";
+import { buildForest } from "./tree.js";
 import { ensureHarnessLayer, drawHarness } from "./harness.js";
 
-// id → session-node element, persisted across renders for reconcile.
-const nodeEls = new Map();
-let rootEl = null;
-let overflowEl = null; // the "+N" cluster node when children don't fit (AM-9)
-let onSelectFn = null;
-// Kept so the ResizeObserver can re-lay-out without a fresh snapshot (AM-9).
-let lastStage = null;
-let lastSessions = [];
-let resizeObserver = null;
+// ---------------------------------------------------------------------------
+// Tunables
+// ---------------------------------------------------------------------------
 
-// UI-breakage guard tunables (AM-9): nodes shrink to fit a narrow widget and
-// overflow into a "+N" cluster rather than overlapping.
-const PAD = 12; // horizontal breathing room on each edge
-const GAP = 8; // minimum gap between sibling nodes
-const MIN_CHILD = 24; // never shrink a character below this (readability floor)
+const PAD_X = 14; // px breathing room at the stage's left/right edges
+const PAD_TOP = 64; // px above the far floor edge (room for bubbles/titles)
+const PAD_BOTTOM = 30; // px below the near floor edge (room for titles)
+const MIN_CHILD = 24; // density floor: never shrink a session sprite below this
+const GAP = 8;
+const SCALE_FAR = 0.62; // sprite scale at v=0 (back of the floor)
+const SCALE_NEAR = 1.12; // sprite scale at v=1 (front of the floor)
+const LEASH_SESSION = 0.42; // how far a session may wander from the root (u/v units)
+const LEASH_SUB = 0.2; // how far a sub-agent may wander from its session
+const DRAG_THRESHOLD = 5; // px of pointer travel before a click becomes a drag
 
-// Root expression reflects the most attention-worthy session state, so the
-// parent Fetchy "feels" what its children are doing (idle/napping when none).
+/** Per-state stroll personality: what to do on arrival, for how long, and how
+ *  far the next hop goes. Speeds are in floor-units/second. States that need
+ *  the USER's attention (waiting / error / done) pin in place — `roam: false`
+ *  means the dog stops strolling entirely and acts out its motion where it
+ *  stands, so the signal can't wander out of the corner of your eye. */
+const BEHAVIOR = {
+  working: { act: 3.5, actVar: 3.5, hop: 0.1, speed: 0.1, roam: true }, // digs long, short hops
+  waiting: { act: 2.5, actVar: 2.5, hop: 0.07, speed: 0.08, roam: false }, // spins in place
+  error: { act: 2.0, actVar: 2.0, hop: 0.09, speed: 0.12, roam: false }, // growls in place
+  done: { act: 1.6, actVar: 1.4, hop: 0.22, speed: 0.14, roam: false }, // shows off the bone in place
+  idle: { act: 8.0, actVar: 8.0, hop: 0.08, speed: 0.05, roam: true }, // sleeps, rarely relocates
+  pending: { act: 2.0, actVar: 2.0, hop: 0.12, speed: 0.08, roam: true }, // wanders, looking around
+};
+const ROOT_SPEED = 0.05; // the big dog strolls slowly, stately
+
 const ROOT_PRIORITY = ["waiting", "error", "working", "done", "idle"];
 function rootState(sessions) {
   for (const st of ROOT_PRIORITY) {
@@ -40,243 +58,478 @@ function rootState(sessions) {
   return "idle";
 }
 
-/** Inner markup for a node (bubble + sprite host + title). */
-function nodeInnerHTML(role, session) {
-  const size = tierSize(role);
-  const bubble =
-    session && session.summary
-      ? `<div class="thought-bubble">${escapeHtml(session.summary)}</div>`
-      : "";
-  const titleText = session ? session.project_name : "Claude Code";
-  const title = `<div class="node-title">${escapeHtml(titleText)}</div>`;
-  return `${bubble}<div class="char-wrap" style="width:${size}px;height:${size}px"></div>${title}`;
-}
+// ---------------------------------------------------------------------------
+// Module state
+// ---------------------------------------------------------------------------
 
-/** Create the node's SpriteAnimator on its char-wrap (root wears the collar). */
-function attachSprite(el, role, state) {
-  const wrap = el.querySelector(".char-wrap");
-  el._sprite = new SpriteAnimator(wrap, dogSheet, role === "root" ? { overlay: "collar" } : {});
-  setSpriteState(el, state);
-}
+/** id → entity. An entity owns its DOM node, sprite animator, and floor state. */
+const entities = new Map();
+const ROOT_ID = "__root__";
+const OVERFLOW_ID = "__overflow__";
 
-/** Point the node's animator at the animation mapped to a visual state. */
-function setSpriteState(el, state) {
-  if (!el._sprite) return;
-  const key = STATE_COLOR[state] ? state : "idle";
-  el._sprite.setAnim(dogSheet.stateAnims[key] || "idle", STATE_COLOR[key]);
-}
+let stageEl = null;
+let harnessSvg = null;
+let onSelectFn = null;
+let rafId = null;
+let lastTick = 0;
+let resizeObserver = null;
 
-/** Create the root node once; it is always shown (AM-2). */
-function ensureRoot(stage) {
-  if (rootEl && stage.contains(rootEl)) return rootEl;
-  rootEl = document.createElement("div");
-  rootEl.className = "anim-node anim-root";
-  rootEl.dataset.role = "root";
-  rootEl.dataset.state = "idle";
-  rootEl.innerHTML = nodeInnerHTML("root", null);
-  attachSprite(rootEl, "root", "idle");
-  stage.appendChild(rootEl);
-  return rootEl;
-}
+const reducedMotion =
+  typeof matchMedia === "function"
+    ? matchMedia("(prefers-reduced-motion: reduce)")
+    : { matches: false };
 
-/** Patch the root's expression when the aggregate state changes. */
-function updateRoot(sessions) {
-  if (!rootEl) return;
-  const state = rootState(sessions);
-  if (rootEl.dataset.state !== state) {
-    rootEl.dataset.state = state;
-    setSpriteState(rootEl, state);
-  }
-}
+// ---------------------------------------------------------------------------
+// Entities
+// ---------------------------------------------------------------------------
 
-function createSessionNode(session, stage) {
+function makeNodeEl(role, session) {
   const el = document.createElement("div");
   el.className = "anim-node anim-spawn";
-  el.dataset.sessionId = session.id;
-  el.dataset.role = "session";
-  el.dataset.state = visualKey(session);
-  el.innerHTML = nodeInnerHTML("session", session);
-  attachSprite(el, "session", el.dataset.state);
-  el.addEventListener("click", () => onSelectFn && onSelectFn(session.id));
-  // Drop the spawn class once it finishes so later reconciles don't replay it.
+  el.dataset.role = role;
+  const bubble = session && session.summary ? `<div class="thought-bubble"></div>` : "";
+  const title = role === "overflow" ? "+0" : session ? session.project_name : "Claude Code";
+  el.innerHTML = `${bubble}<div class="char-wrap"></div><div class="node-title${role === "overflow" ? " overflow-count" : ""}">${escapeHtml(title)}</div>`;
   el.addEventListener("animationend", () => el.classList.remove("anim-spawn"), {
     once: true,
   });
-  stage.appendChild(el);
   return el;
 }
 
-/** Patch an existing node in place (no innerHTML churn unless the state flips). */
-function updateSessionNode(el, session) {
-  const state = visualKey(session);
-  if (el.dataset.state !== state) {
-    el.dataset.state = state;
-    setSpriteState(el, state);
-  }
-  // Thought bubble (current work summary, AM-5).
-  let bubble = el.querySelector(".thought-bubble");
-  if (session.summary) {
-    if (!bubble) {
-      bubble = document.createElement("div");
-      bubble.className = "thought-bubble";
-      el.insertBefore(bubble, el.firstChild);
-    }
-    if (bubble.textContent !== session.summary) bubble.textContent = session.summary;
-  } else if (bubble) {
-    bubble.remove();
-  }
-  // Title (project name).
-  const title = el.querySelector(".node-title");
-  if (title && title.textContent !== session.project_name) {
-    title.textContent = session.project_name;
-  }
+function makeEntity(id, role, session, parent) {
+  // Spawn near the parent (or stage center for the root) with a small scatter.
+  const pu = parent ? parent.u : 0.5;
+  const pv = parent ? parent.v : 0.45;
+  const u = clamp01(pu + (Math.random() - 0.5) * 0.3);
+  const v = clamp01(pv + (Math.random() - 0.5) * 0.3);
+  const el = makeNodeEl(role, session);
+  const ent = {
+    id,
+    role,
+    el,
+    session,
+    parentId: parent ? parent.id : null,
+    state: "idle",
+    u,
+    v,
+    tu: u,
+    tv: v,
+    mode: "act", // "stroll" | "act" | "held"
+    modeLeft: rand(0.5, 1.5), // seconds left in the current mode
+    facing: Math.random() < 0.5,
+    held: false,
+    dragMoved: false,
+    sprite: null,
+  };
+  ent.wrapEl = el.querySelector(".char-wrap");
+  ent.sprite = new SpriteAnimator(ent.wrapEl, dogSheet, {
+    overlay: role === "root" ? "collar" : null,
+  });
+  el.dataset.state = ent.state;
+  applyAnim(ent);
+  wirePointer(ent);
+  stageEl.appendChild(el);
+  entities.set(id, ent);
+  return ent;
 }
 
-/** Despawn: play the exit animation then remove. A timer guarantees removal
- *  even under prefers-reduced-motion (where the animation does not run). */
-function despawn(el) {
+function destroyEntity(ent) {
+  entities.delete(ent.id);
   let removed = false;
   const remove = () => {
     if (removed) return;
     removed = true;
-    if (el._sprite) el._sprite.destroy();
-    el.remove();
+    ent.sprite.destroy();
+    ent.el.remove();
   };
-  el.classList.add("anim-despawn");
-  el.addEventListener("animationend", remove, { once: true });
+  ent.el.classList.add("anim-despawn");
+  ent.el.addEventListener("animationend", remove, { once: true });
   setTimeout(remove, 420);
 }
 
-function positionNode(el, x, y) {
-  if (!el) return;
-  el.style.left = `${x}px`;
-  el.style.top = `${y}px`;
-}
+/** Patch session-derived bits (state, bubble, title) without rebuilding DOM. */
+function updateEntity(ent, session) {
+  ent.session = session;
+  const state = session ? visualKey(session) : ent.state;
+  setEntityState(ent, state);
 
-/** Apply a computed character size to a node's char-wrap (AM-9 scale-down). */
-function setNodeSize(el, size) {
-  const wrap = el && el.querySelector(".char-wrap");
-  if (wrap) {
-    wrap.style.width = `${size}px`;
-    wrap.style.height = `${size}px`;
-  }
-}
-
-/** The faded "+N" cluster node shown when children don't fit (AM-9). */
-function ensureOverflowNode(stage) {
-  if (overflowEl && stage.contains(overflowEl)) return overflowEl;
-  overflowEl = document.createElement("div");
-  overflowEl.className = "anim-node anim-overflow";
-  overflowEl.dataset.role = "overflow";
-  overflowEl.innerHTML = `<div class="char-wrap"></div><div class="node-title overflow-count">+0</div>`;
-  attachSprite(overflowEl, "session", "idle");
-  stage.appendChild(overflowEl);
-  return overflowEl;
-}
-
-/** Re-lay-out on widget resize (AM-9), rAF-debounced to avoid observer loops. */
-function ensureResizeObserver(stage) {
-  if (resizeObserver || typeof ResizeObserver === "undefined") return;
-  let scheduled = false;
-  resizeObserver = new ResizeObserver(() => {
-    if (scheduled) return;
-    scheduled = true;
-    requestAnimationFrame(() => {
-      scheduled = false;
-      if (lastStage) layout(lastStage, buildForest(lastSessions));
-    });
-  });
-  resizeObserver.observe(stage);
-}
-
-/**
- * Place the root, its session children, and each session's sub-agents (depth-2,
- * GF-108), then (re)draw the leashes. Sessions shrink to fit the (narrow) widget
- * and overflow into a "+N" cluster instead of overlapping (AM-9); the size floor
- * (MIN_CHILD) keeps them readable. Sub-agents render smaller in a row beneath
- * their parent session.
- */
-function layout(stage, forest) {
-  const w = stage.clientWidth || 360;
-  const h = stage.clientHeight || 400;
-  const rootSize = tierSize("root");
-  const cx = w / 2;
-  const rootY = rootSize / 2 + 22;
-  positionNode(rootEl, cx, rootY);
-
-  const sessions = forest.children;
-  const n = sessions.length;
-  const usable = Math.max(MIN_CHILD, w - PAD * 2);
-
-  // How many fit at the readability floor; reserve a slot for "+N" on overflow.
-  const maxAtMin = Math.max(1, Math.floor(usable / (MIN_CHILD + GAP)));
-  let visible = sessions;
-  let overflowCount = 0;
-  if (n > maxAtMin) {
-    visible = sessions.slice(0, Math.max(1, maxAtMin - 1));
-    overflowCount = n - visible.length;
-  }
-
-  const slots = visible.length + (overflowCount > 0 ? 1 : 0);
-  const maxChild = tierSize("session");
-  const childSize =
-    slots > 0
-      ? Math.max(MIN_CHILD, Math.min(maxChild, Math.floor(usable / slots - GAP)))
-      : maxChild;
-
-  const childY = Math.min(h - childSize / 2 - 26, rootY + 124);
-  const spacing = w / (slots + 1);
-  const fromRoot = { x: cx, y: rootY + rootSize / 2 };
-  const links = [];
-
-  // Sub-agent (depth-2) size: smaller than its parent, with its own floor.
-  const subSize = Math.max(20, Math.min(tierSize("subagent"), Math.round(childSize * 0.7)));
-  // Extra vertical gap: the session's title sits below it and the sub-agent's
-  // thought bubble sits above it, so the row needs room for both to avoid the
-  // slight overlap reported (was +18 → +42).
-  const subY = Math.min(h - subSize / 2 - 8, childY + childSize / 2 + subSize / 2 + 42);
-
-  visible.forEach((sess, i) => {
-    const el = nodeEls.get(sess.id);
-    if (!el) return;
-    const x = spacing * (i + 1);
-    setNodeSize(el, childSize);
-    el.style.setProperty("--bounce-delay", `${(i % 4) * 0.3}s`); // stagger (AM-4)
-    positionNode(el, x, childY);
-    links.push({ from: fromRoot, to: { x, y: childY - childSize / 2 }, session: sess.session });
-
-    // Place this session's sub-agents in a centered row beneath it (AM-3 / L2).
-    const subs = sess.children;
-    if (subs.length > 0) {
-      const fromSess = { x, y: childY + childSize / 2 };
-      const step = subSize + 6;
-      const rowW = (subs.length - 1) * step;
-      subs.forEach((sub, j) => {
-        const subEl = nodeEls.get(sub.id);
-        if (!subEl) return;
-        const sx = Math.max(subSize / 2, Math.min(w - subSize / 2, x - rowW / 2 + j * step));
-        setNodeSize(subEl, subSize);
-        subEl.style.setProperty("--bounce-delay", `${(j % 4) * 0.3}s`);
-        positionNode(subEl, sx, subY);
-        links.push({ from: fromSess, to: { x: sx, y: subY - subSize / 2 }, session: sub.session });
-      });
+  let bubble = ent.el.querySelector(".thought-bubble");
+  const summary = session ? session.summary : "";
+  if (summary) {
+    if (!bubble) {
+      bubble = document.createElement("div");
+      bubble.className = "thought-bubble";
+      ent.el.insertBefore(bubble, ent.el.firstChild);
     }
-  });
+    if (bubble.textContent !== summary) bubble.textContent = summary;
+  } else if (bubble) {
+    bubble.remove();
+  }
+  const title = ent.el.querySelector(".node-title");
+  const titleText = session ? session.project_name : "Claude Code";
+  if (ent.role !== "overflow" && title && title.textContent !== titleText) {
+    title.textContent = titleText;
+  }
+}
 
-  if (overflowCount > 0) {
-    const ov = ensureOverflowNode(stage);
-    ov.hidden = false;
-    const count = ov.querySelector(".overflow-count");
-    if (count) count.textContent = `+${overflowCount}`;
-    setNodeSize(ov, childSize);
-    const x = spacing * slots;
-    positionNode(ov, x, childY);
-    links.push({ from: fromRoot, to: { x, y: childY - childSize / 2 }, session: null });
-  } else if (overflowEl) {
-    overflowEl.hidden = true;
+function setEntityState(ent, state) {
+  const key = STATE_COLOR[state] ? state : "idle";
+  if (ent.state === key) return;
+  ent.state = key;
+  ent.el.dataset.state = key;
+  const b = BEHAVIOR[key] || BEHAVIOR.idle;
+  if (!b.roam && ent.mode !== "held") {
+    // Attention states (waiting/error/done) pin immediately: stop mid-stroll
+    // and act the new motion where the dog stands.
+    ent.mode = "act";
+    ent.modeLeft = b.act;
+  } else if (ent.mode === "act") {
+    // A state flip interrupts whatever the dog was doing: act out the new
+    // state promptly (a finished dig → fetch should be immediate).
+    ent.modeLeft = Math.min(ent.modeLeft, 0.3);
+  }
+  applyAnim(ent);
+}
+
+/** Choose the sprite animation for the entity's current mode + state. */
+function applyAnim(ent) {
+  const color = STATE_COLOR[ent.state];
+  if (ent.mode === "stroll") {
+    const du = ent.tu - ent.u;
+    const dv = ent.tv - ent.v;
+    if (Math.abs(dv) > Math.abs(du) * 1.6) {
+      ent.sprite.setAnim(dv > 0 ? "walkFront" : "walkBack", color);
+      ent.sprite.setFlip(false);
+    } else {
+      ent.sprite.setAnim("walk", color);
+      ent.facing = du < 0;
+      ent.sprite.setFlip(ent.facing);
+    }
+  } else {
+    ent.sprite.setAnim(dogSheet.stateAnims[ent.state] || "idle", color);
+    ent.sprite.setFlip(ent.facing);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Behavior (per-frame)
+// ---------------------------------------------------------------------------
+
+function rand(min, max) {
+  return min + Math.random() * (max - min);
+}
+function clamp01(x) {
+  return Math.max(0.02, Math.min(0.98, x));
+}
+
+function leashOf(ent) {
+  return ent.role === "subagent" ? LEASH_SUB : LEASH_SESSION;
+}
+
+/** Pick the next stroll target: a hop in a random direction, biased back inside
+ *  the leash radius around the parent so children orbit their parent. */
+function pickTarget(ent) {
+  const b = BEHAVIOR[ent.state] || BEHAVIOR.idle;
+  const parent = ent.parentId ? entities.get(ent.parentId) : null;
+  let cu = ent.u;
+  let cv = ent.v;
+  if (parent) {
+    const du = ent.u - parent.u;
+    const dv = ent.v - parent.v;
+    const dist = Math.hypot(du, dv);
+    const leash = leashOf(ent);
+    if (dist > leash) {
+      // Outside the leash — head back toward the parent's side.
+      ent.tu = clamp01(parent.u + (du / (dist || 1)) * leash * 0.6);
+      ent.tv = clamp01(parent.v + (dv / (dist || 1)) * leash * 0.6);
+      return;
+    }
+    cu = parent.u;
+    cv = parent.v;
+  }
+  const ang = Math.random() * Math.PI * 2;
+  const hop = rand(b.hop * 0.4, b.hop);
+  let tu = ent.u + Math.cos(ang) * hop;
+  let tv = ent.v + Math.sin(ang) * hop;
+  if (parent) {
+    // Keep the target inside the leash circle around the parent.
+    const du = tu - cu;
+    const dv = tv - cv;
+    const d = Math.hypot(du, dv);
+    const leash = leashOf(ent);
+    if (d > leash) {
+      tu = cu + (du / d) * leash;
+      tv = cv + (dv / d) * leash;
+    }
+  }
+  ent.tu = clamp01(tu);
+  ent.tv = clamp01(tv);
+}
+
+function stepBehavior(ent, dt) {
+  if (ent.mode === "held") return;
+  const b = BEHAVIOR[ent.state] || BEHAVIOR.idle;
+
+  if (ent.mode === "act") {
+    ent.modeLeft -= dt;
+    if (ent.modeLeft <= 0) {
+      if (!b.roam) {
+        // Needs the user: keep acting in place until the state changes.
+        ent.modeLeft = b.act;
+        return;
+      }
+      ent.mode = "stroll";
+      pickTarget(ent);
+      applyAnim(ent);
+    }
+    return;
   }
 
-  drawHarness(ensureHarnessLayer(stage), links, w, h);
+  // stroll: walk toward the target.
+  const speed = ent.role === "root" ? ROOT_SPEED : b.speed;
+  const du = ent.tu - ent.u;
+  const dv = ent.tv - ent.v;
+  const dist = Math.hypot(du, dv);
+  const step = speed * dt;
+  if (dist <= step || dist < 0.004) {
+    ent.u = ent.tu;
+    ent.v = ent.tv;
+    ent.mode = "act";
+    ent.modeLeft = b.act + Math.random() * b.actVar;
+    // Acting plays the state motion facing the way the dog was last heading.
+    applyAnim(ent);
+  } else {
+    ent.u += (du / dist) * step;
+    ent.v += (dv / dist) * step;
+  }
+}
+
+/** Soft separation: push overlapping pairs apart so characters never stack. */
+function separate(dims) {
+  const list = [...entities.values()].filter((e) => !e.held);
+  for (let i = 0; i < list.length; i++) {
+    for (let j = i + 1; j < list.length; j++) {
+      const a = list[i];
+      const b = list[j];
+      const du = b.u - a.u;
+      const dv = b.v - a.v;
+      // Minimum comfortable distance, scaled from sprite sizes to floor units.
+      const need =
+        ((sizeOf(a, dims) + sizeOf(b, dims)) * 0.55 + GAP) / Math.max(1, dims.w);
+      const d = Math.hypot(du, dv) || 0.0001;
+      if (d < need) {
+        const push = (need - d) * 0.5;
+        const px = (du / d) * push;
+        const py = (dv / d) * push;
+        a.u = clamp01(a.u - px);
+        a.v = clamp01(a.v - py * 0.6); // depth shifts read stronger — damp them
+        b.u = clamp01(b.u + px);
+        b.v = clamp01(b.v + py * 0.6);
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Projection
+// ---------------------------------------------------------------------------
+
+function stageDims() {
+  const w = stageEl.clientWidth || 380;
+  const h = stageEl.clientHeight || 420;
+  return { w, h, yTop: PAD_TOP, yBottom: h - PAD_BOTTOM };
+}
+
+/** Density scale: with many sessions everyone shrinks a bit (AM-9 spirit). */
+function densityScale() {
+  const n = [...entities.values()].filter((e) => e.role === "session").length;
+  return n <= 5 ? 1 : Math.max(0.55, Math.sqrt(5 / n));
+}
+
+function sizeOf(ent, dims) {
+  const tier = SIZE_TIERS[ent.role === "overflow" ? "session" : ent.role] || SIZE_TIERS.session;
+  const depth = SCALE_FAR + (SCALE_NEAR - SCALE_FAR) * ent.v;
+  const density = ent.role === "root" ? 1 : dims.density;
+  return Math.max(MIN_CHILD * 0.75, Math.round(tier * depth * density));
+}
+
+function project(ent, dims) {
+  const x = PAD_X + ent.u * (dims.w - PAD_X * 2);
+  const y = dims.yTop + ent.v * (dims.yBottom - dims.yTop);
+  return { x, y };
+}
+
+function applyTransforms(dims) {
+  for (const ent of entities.values()) {
+    const { x, y } = project(ent, dims);
+    const size = sizeOf(ent, dims);
+    const wrap = ent.wrapEl;
+    if (wrap && wrap._size !== size) {
+      wrap.style.width = `${size}px`;
+      wrap.style.height = `${size}px`;
+      wrap._size = size;
+    }
+    // Nodes anchor at bottom-center (feet on the floor point); keep the whole
+    // node — sprite above, title below, bubble on top — inside the stage.
+    const cx = Math.max(size / 2 + 2, Math.min(dims.w - size / 2 - 2, x));
+    const cy = Math.max(size + 46, Math.min(dims.yBottom + 18, y));
+    ent.el.style.left = `${cx}px`;
+    ent.el.style.top = `${cy}px`;
+    ent.el.style.zIndex = String(1 + Math.round(ent.v * 100));
+  }
+}
+
+function drawLeashes(dims) {
+  const links = [];
+  for (const ent of entities.values()) {
+    if (!ent.parentId) continue;
+    const parent = entities.get(ent.parentId);
+    if (!parent) continue;
+    const from = project(parent, dims);
+    const to = project(ent, dims);
+    const fromSize = sizeOf(parent, dims);
+    const toSize = sizeOf(ent, dims);
+    // Attach at the characters' bodies: nodes anchor feet-down, with the title
+    // strip (~14px) between the floor point and the sprite.
+    links.push({
+      from: { x: from.x, y: from.y - 14 - fromSize * 0.5 },
+      to: { x: to.x, y: to.y - 14 - toSize * 0.5 },
+      session: ent.session,
+    });
+  }
+  drawHarness(harnessSvg, links, dims.w, dims.h);
+}
+
+// ---------------------------------------------------------------------------
+// Drag interaction (drag = move the dog; click = open detail)
+// ---------------------------------------------------------------------------
+
+function screenToFloor(x, y, dims) {
+  const rect = stageEl.getBoundingClientRect();
+  const u = (x - rect.left - PAD_X) / (dims.w - PAD_X * 2);
+  const v = (y - rect.top - dims.yTop) / (dims.yBottom - dims.yTop);
+  return { u: clamp01(u), v: clamp01(v) };
+}
+
+function wirePointer(ent) {
+  const el = ent.el;
+  el.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    ent.dragMoved = false;
+    el.setPointerCapture(e.pointerId);
+
+    const onMove = (ev) => {
+      if (
+        !ent.dragMoved &&
+        Math.hypot(ev.clientX - startX, ev.clientY - startY) < DRAG_THRESHOLD
+      ) {
+        return;
+      }
+      if (!ent.dragMoved) {
+        ent.dragMoved = true;
+        ent.held = true;
+        ent.mode = "held";
+        el.classList.add("held");
+        ent.sprite.setAnim(dogSheet.stateAnims[ent.state] || "idle", STATE_COLOR[ent.state]);
+      }
+      const dims = stageDims();
+      dims.density = densityScale();
+      const pos = screenToFloor(ev.clientX, ev.clientY, dims);
+      ent.u = pos.u;
+      ent.v = pos.v;
+      if (reducedMotion.matches) {
+        // No rAF loop under reduced motion — project this move directly.
+        applyTransforms(dims);
+        drawLeashes(dims);
+      }
+    };
+    const onUp = () => {
+      el.removeEventListener("pointermove", onMove);
+      el.removeEventListener("pointerup", onUp);
+      el.removeEventListener("pointercancel", onUp);
+      if (ent.dragMoved) {
+        ent.held = false;
+        el.classList.remove("held");
+        // Settle where dropped: act briefly, then resume strolling from here.
+        ent.tu = ent.u;
+        ent.tv = ent.v;
+        ent.mode = "act";
+        ent.modeLeft = rand(1, 2.5);
+        applyAnim(ent);
+      } else if (ent.session && onSelectFn) {
+        onSelectFn(ent.session.id);
+      }
+    };
+    el.addEventListener("pointermove", onMove);
+    el.addEventListener("pointerup", onUp);
+    el.addEventListener("pointercancel", onUp);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Main loop
+// ---------------------------------------------------------------------------
+
+function tick(now) {
+  rafId = null;
+  if (!stageEl || !stageEl.isConnected || stageEl.hidden) return; // mode left
+  if (document.hidden) return; // resumed by visibilitychange below
+  const dt = Math.min(0.1, (now - lastTick) / 1000 || 0.016);
+  lastTick = now;
+
+  const dims = stageDims();
+  dims.density = densityScale();
+
+  if (!reducedMotion.matches) {
+    for (const ent of entities.values()) stepBehavior(ent, dt);
+    separate(dims);
+  }
+  applyTransforms(dims);
+  drawLeashes(dims);
+
+  rafId = requestAnimationFrame(tick);
+}
+
+function ensureLoop() {
+  if (rafId === null && stageEl) {
+    lastTick = 0;
+    rafId = requestAnimationFrame(tick);
+  }
+}
+
+if (typeof document !== "undefined") {
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) ensureLoop();
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Reconcile + entry point
+// ---------------------------------------------------------------------------
+
+/** Static spread for reduced motion: deterministic ring placement, no roaming. */
+function placeStatic() {
+  const sessions = [...entities.values()].filter((e) => e.role === "session");
+  const subs = [...entities.values()].filter((e) => e.role === "subagent");
+  const root = entities.get(ROOT_ID);
+  if (root) {
+    root.u = 0.5;
+    root.v = 0.25;
+  }
+  sessions.forEach((ent, i) => {
+    ent.u = (i + 1) / (sessions.length + 1);
+    ent.v = 0.62;
+  });
+  subs.forEach((ent) => {
+    const parent = entities.get(ent.parentId);
+    const siblings = subs.filter((s) => s.parentId === ent.parentId);
+    const idx = siblings.indexOf(ent);
+    ent.u = clamp01((parent ? parent.u : 0.5) + (idx - (siblings.length - 1) / 2) * 0.08);
+    ent.v = 0.86;
+  });
 }
 
 /**
@@ -287,30 +540,94 @@ function layout(stage, forest) {
  */
 export function renderAnimMode(stage, sessions, onSelect) {
   if (!stage) return;
+  stageEl = stage;
   onSelectFn = onSelect;
   const list = Array.isArray(sessions) ? sessions : [];
+  harnessSvg = ensureHarnessLayer(stage);
+
+  if (!resizeObserver && typeof ResizeObserver !== "undefined") {
+    // Positions are relative (u,v) so a resize only needs a reprojection — the
+    // next tick handles it; the observer matters for the reduced-motion path.
+    resizeObserver = new ResizeObserver(() => {
+      if (reducedMotion.matches && stageEl) {
+        const dims = stageDims();
+        dims.density = densityScale();
+        applyTransforms(dims);
+        drawLeashes(dims);
+      }
+    });
+    resizeObserver.observe(stage);
+  }
+
+  // Root is always present (AM-2).
+  let root = entities.get(ROOT_ID);
+  if (!root) {
+    root = makeEntity(ROOT_ID, "root", null, null);
+    root.u = 0.5;
+    root.v = 0.35;
+    root.tu = 0.5;
+    root.tv = 0.35;
+  }
+
   const forest = buildForest(list);
 
-  lastStage = stage;
-  lastSessions = list;
-  ensureRoot(stage);
-  ensureHarnessLayer(stage);
-  ensureResizeObserver(stage);
+  // Capacity guard (AM-9): beyond what the stage can hold at the floor size,
+  // fold the extra sessions into one roaming "+N" cluster.
+  const dims = stageDims();
+  const capacity = Math.max(2, Math.floor((dims.w - PAD_X * 2) / (MIN_CHILD + GAP)) * 2);
+  const top = forest.children;
+  const visibleTop = top.length > capacity ? top.slice(0, capacity - 1) : top;
+  const overflowCount = top.length - visibleTop.length;
 
-  // Reconcile children by id (AM-8 G2): remove gone, create new, patch existing.
-  const desired = new Set(list.map((s) => s.id));
-  for (const [id, el] of nodeEls) {
-    if (!desired.has(id)) {
-      despawn(el);
-      nodeEls.delete(id);
+  const desired = new Map(); // id → {role, session, parentId}
+  for (const node of visibleTop) {
+    desired.set(node.id, { role: "session", session: node.session, parentId: ROOT_ID });
+    for (const sub of node.children) {
+      desired.set(sub.id, { role: "subagent", session: sub.session, parentId: node.id });
     }
   }
-  for (const s of list) {
-    const existing = nodeEls.get(s.id);
-    if (existing) updateSessionNode(existing, s);
-    else nodeEls.set(s.id, createSessionNode(s, stage));
+
+  // Despawn entities whose session is gone (root/overflow handled separately).
+  for (const ent of [...entities.values()]) {
+    if (ent.id === ROOT_ID || ent.id === OVERFLOW_ID) continue;
+    if (!desired.has(ent.id)) destroyEntity(ent);
+  }
+  // Spawn/patch the rest.
+  for (const [id, info] of desired) {
+    let ent = entities.get(id);
+    if (!ent) {
+      ent = makeEntity(id, info.role, info.session, entities.get(info.parentId));
+      ent.parentId = info.parentId;
+    }
+    ent.parentId = info.parentId;
+    updateEntity(ent, info.session);
   }
 
-  updateRoot(list);
-  layout(stage, forest);
+  // Overflow cluster (+N) — itself a little roaming dog.
+  let overflow = entities.get(OVERFLOW_ID);
+  if (overflowCount > 0) {
+    if (!overflow) {
+      overflow = makeEntity(OVERFLOW_ID, "overflow", null, root);
+      overflow.parentId = ROOT_ID;
+      overflow.el.classList.add("anim-overflow");
+    }
+    setEntityState(overflow, "idle");
+    const count = overflow.el.querySelector(".overflow-count");
+    if (count) count.textContent = `+${overflowCount}`;
+  } else if (overflow) {
+    destroyEntity(overflow);
+  }
+
+  updateEntity(root, null);
+  setEntityState(root, rootState(list));
+
+  if (reducedMotion.matches) {
+    placeStatic();
+    const d = stageDims();
+    d.density = densityScale();
+    applyTransforms(d);
+    drawLeashes(d);
+  } else {
+    ensureLoop();
+  }
 }

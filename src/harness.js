@@ -29,23 +29,36 @@ export function ensureHarnessLayer(stage) {
  * @param {number} h stage height
  */
 export function drawHarness(svg, links, w, h) {
-  svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
-  svg.setAttribute("width", String(w));
-  svg.setAttribute("height", String(h));
-  // One <path> per link; rebuilt each layout (handful of nodes → cheap).
-  svg.replaceChildren();
-  for (const { from, to, session } of links) {
+  if (svg._w !== w || svg._h !== h) {
+    svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+    svg.setAttribute("width", String(w));
+    svg.setAttribute("height", String(h));
+    svg._w = w;
+    svg._h = h;
+  }
+  // Reuse <path> elements across calls — the roaming stage (GF-116) redraws
+  // every animation frame, so this must be attribute patching, not rebuilds.
+  while (svg.childNodes.length > links.length) svg.removeChild(svg.lastChild);
+  while (svg.childNodes.length < links.length) {
     const path = document.createElementNS(SVG_NS, "path");
-    // Downward sag between the two anchors for a "hanging leash" feel.
-    const sag = Math.min(26, Math.abs(to.y - from.y) * 0.25 + 8);
-    const midY = (from.y + to.y) / 2 + sag;
-    path.setAttribute(
-      "d",
-      `M ${from.x} ${from.y} C ${from.x} ${midY}, ${to.x} ${midY}, ${to.x} ${to.y}`,
-    );
-    const state = session ? visualKey(session) : "idle";
-    path.setAttribute("stroke", STATE_COLOR[state] || STATE_COLOR.idle);
     path.setAttribute("class", "harness-line");
     svg.appendChild(path);
   }
+  links.forEach(({ from, to, session }, i) => {
+    const path = svg.childNodes[i];
+    // Downward sag between the two anchors for a "hanging leash" feel.
+    const sag = Math.min(26, Math.abs(to.y - from.y) * 0.25 + 8);
+    const midY = (from.y + to.y) / 2 + sag;
+    const d = `M ${Math.round(from.x)} ${Math.round(from.y)} C ${Math.round(from.x)} ${Math.round(midY)}, ${Math.round(to.x)} ${Math.round(midY)}, ${Math.round(to.x)} ${Math.round(to.y)}`;
+    if (path._d !== d) {
+      path.setAttribute("d", d);
+      path._d = d;
+    }
+    const state = session ? visualKey(session) : "idle";
+    const stroke = STATE_COLOR[state] || STATE_COLOR.idle;
+    if (path._stroke !== stroke) {
+      path.setAttribute("stroke", stroke);
+      path._stroke = stroke;
+    }
+  });
 }
