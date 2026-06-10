@@ -9,7 +9,7 @@
 //   working → dig   땅을 열심히 파헤치고 흙이 튄다 (4f)
 //   waiting → spin  제자리에서 빙글빙글 (옆→정면→옆→뒤, 4f)
 //   error   → growl 자세를 낮추고 이빨을 드러내며 으르릉 (3f)
-//   done    → fetch 뼈를 물고 꼬리를 부드럽게 흔든다 (3f)
+//   done    → fetch 코랄 사각 AI 캐릭터(앱 아이콘과 동일)를 물고 꼬리를 흔든다 (3f)
 //   idle    → sleep 엎드려 잠, 숨이 오르내림 (3f)
 //   pending → look  두리번 (4f)
 
@@ -23,7 +23,8 @@ const PALETTE = {
   R: "#ecc888", // collar pixels — coat-colored by default (invisible);
   T: "#ecc888", // the ROOT's palette override turns R/T red/gold (rootPalette)
   D: "#8a6f47", // flying dirt
-  B: "#efe6c8", // fetched bone
+  o: "#d97757", // fetched AI buddy — the coral square friend from the app icon
+  q: "#bc5f41", // AI buddy bottom shading
   A: "#e8554d", // growl anger sparks
   z: "#9ca3af", // sleep Zz
 };
@@ -278,25 +279,36 @@ const GROWL_C = edit(GROWL_BASE, {
 
 // ---- done: fetch ----------------------------------------------------------------
 
-// Carrying a bone (double-knob ends) crossways in the mouth; the feathered
-// tail sweeps through three positions for a smooth happy wag.
-const boneRows = {
-  7: ".sgs.............eeggggggB...B..",
-  8: ".sggs............eeggggggBBBBBB.",
-  9: "..sggs............gggggccB...B..",
-};
-const FETCH_A = edit(STAND, boneRows);
+// Done = the dog trots back with its prize: the square coral AI buddy (the
+// same little guy as the app icon — slim eyes, tiny smile, shaded base)
+// gripped in its mouth and hanging below the nose, while the feathered tail
+// sweeps through three positions for a smooth happy wag.
+const FETCH_A = edit(STAND, {
+  8: ".sggs............eegggggg.ooooo.",
+  9: "..sggs............gggggccooooooo",
+  10: "...sggs...........gRRRRRgooNooNo",
+  11: "....sggggggggggggggggTgggooNooNo",
+  12: ".......ggggggggggggggggggooooooo",
+  13: ".......gggggggggggccccc..oooNNoo",
+  14: ".......gggggggggggccccc...qqqqq.",
+});
 const FETCH_B = edit(TAIL_MID, {
-  ...boneRows,
-  7: ".................eeggggggB...B..",
-  8: "ss...............eeggggggBBBBBB.",
-  9: "sggs..............gggggccB...B..",
+  8: "ss...............eegggggg.ooooo.",
+  9: "sggs..............gggggccooooooo",
+  10: ".sggs.............gRRRRRgooNooNo",
+  11: "....sggggggggggggggggTgggooNooNo",
+  12: ".......ggggggggggggggggggooooooo",
+  13: ".......gggggggggggccccc..oooNNoo",
+  14: ".......gggggggggggccccc...qqqqq.",
 });
 const FETCH_C = edit(TAIL_LOW, {
-  ...boneRows,
-  7: ".................eeggggggB...B..",
-  8: ".................eeggggggBBBBBB.",
-  9: "..................gggggccB...B..",
+  8: ".................eegggggg.ooooo.",
+  9: "..................gggggccooooooo",
+  10: "ss................gRRRRRgooNooNo",
+  11: "sggggggggggggggggggggTgggooNooNo",
+  12: ".......ggggggggggggggggggooooooo",
+  13: ".......gggggggggggccccc..oooNNoo",
+  14: ".......gggggggggggccccc...qqqqq.",
 });
 
 // ---- idle: sleep -----------------------------------------------------------------
