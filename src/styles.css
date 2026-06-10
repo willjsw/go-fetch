@@ -202,6 +202,54 @@ body {
   to { opacity: 0; transform: translate(-50%, -50%) scale(0.3); }
 }
 
+/* Overflow "+N" cluster node (AM-9): faded, non-interactive. */
+.anim-overflow {
+  cursor: default;
+  opacity: 0.7;
+}
+.anim-overflow[hidden] {
+  display: none;
+}
+.anim-overflow .overflow-count {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* Periodic "bounce" on session characters (AM-4) — excludes the root (it
+   floats), gated on motion preference, staggered via --bounce-delay. */
+@media (prefers-reduced-motion: no-preference) {
+  .anim-node:not(.anim-root) .char-wrap {
+    animation: gf-bounce 2.4s ease-in-out infinite;
+    animation-delay: var(--bounce-delay, 0s);
+  }
+}
+@keyframes gf-bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+
+/* G1 perf: pause ambient bounce when nothing is active (quiet)… */
+.gf-quiet .anim-node:not(.anim-root) .char-wrap {
+  animation-play-state: paused;
+}
+/* …and pause ALL character motion while the window is hidden/minimized. */
+.gf-paused .gf-char,
+.gf-paused .gf-arm,
+.gf-paused .char-wrap {
+  animation-play-state: paused !important;
+}
+
+/* Hard reduced-motion floor: no ambient/bounce/spawn motion at all. */
+@media (prefers-reduced-motion: reduce) {
+  .gf-char,
+  .gf-arm,
+  .anim-node .char-wrap,
+  .anim-spawn,
+  .anim-despawn {
+    animation: none !important;
+  }
+}
+
 /* ---- Pixel character (SVG) ---- */
 .gf-char {
   display: block;

@@ -15,7 +15,18 @@ import { ensureHarnessLayer, drawHarness } from "./harness.js";
 // id → session-node element, persisted across renders for reconcile.
 const nodeEls = new Map();
 let rootEl = null;
+let overflowEl = null; // the "+N" cluster node when children don't fit (AM-9)
 let onSelectFn = null;
+// Kept so the ResizeObserver can re-lay-out without a fresh snapshot (AM-9).
+let lastStage = null;
+let lastSessions = [];
+let resizeObserver = null;
+
+// UI-breakage guard tunables (AM-9): nodes shrink to fit a narrow widget and
+// overflow into a "+N" cluster rather than overlapping.
+const PAD = 12; // horizontal breathing room on each edge
+const GAP = 8; // minimum gap between sibling nodes
+const MIN_CHILD = 24; // never shrink a character below this (readability floor)
 
 // Root expression reflects the most attention-worthy session state, so the
 // parent Fetchy "feels" what its children are doing (idle/napping when none).
@@ -126,33 +137,102 @@ function positionNode(el, x, y) {
   el.style.top = `${y}px`;
 }
 
-/** Place the root + children and (re)draw the leashes. */
+/** Apply a computed character size to a node's char-wrap (AM-9 scale-down). */
+function setNodeSize(el, size) {
+  const wrap = el && el.querySelector(".char-wrap");
+  if (wrap) {
+    wrap.style.width = `${size}px`;
+    wrap.style.height = `${size}px`;
+  }
+}
+
+/** The faded "+N" cluster node shown when children don't fit (AM-9). */
+function ensureOverflowNode(stage) {
+  if (overflowEl && stage.contains(overflowEl)) return overflowEl;
+  overflowEl = document.createElement("div");
+  overflowEl.className = "anim-node anim-overflow";
+  overflowEl.dataset.role = "overflow";
+  overflowEl.innerHTML = `<div class="char-wrap">${characterSvg("idle", { role: "session" })}</div><div class="node-title overflow-count">+0</div>`;
+  stage.appendChild(overflowEl);
+  return overflowEl;
+}
+
+/** Re-lay-out on widget resize (AM-9), rAF-debounced to avoid observer loops. */
+function ensureResizeObserver(stage) {
+  if (resizeObserver || typeof ResizeObserver === "undefined") return;
+  let scheduled = false;
+  resizeObserver = new ResizeObserver(() => {
+    if (scheduled) return;
+    scheduled = true;
+    requestAnimationFrame(() => {
+      scheduled = false;
+      if (lastStage) layout(lastStage, buildForest(lastSessions));
+    });
+  });
+  resizeObserver.observe(stage);
+}
+
+/**
+ * Place the root + children and (re)draw the leashes. Children shrink to fit
+ * the (narrow) widget and overflow into a "+N" cluster instead of overlapping
+ * (AM-9). The character size floor (MIN_CHILD) keeps them readable.
+ */
 function layout(stage, forest) {
   const w = stage.clientWidth || 360;
   const h = stage.clientHeight || 400;
   const rootSize = tierSize("root");
-  const childSize = tierSize("session");
   const cx = w / 2;
   const rootY = rootSize / 2 + 22;
   positionNode(rootEl, cx, rootY);
 
   const children = forest.children;
-  const links = [];
-  if (children.length > 0) {
-    const childY = Math.min(h - childSize / 2 - 26, rootY + 130);
-    const spacing = w / (children.length + 1);
-    children.forEach((child, i) => {
-      const el = nodeEls.get(child.id);
-      if (!el) return;
-      const x = spacing * (i + 1);
-      positionNode(el, x, childY);
-      links.push({
-        from: { x: cx, y: rootY + rootSize / 2 },
-        to: { x, y: childY - childSize / 2 },
-        session: child.session,
-      });
-    });
+  const n = children.length;
+  const usable = Math.max(MIN_CHILD, w - PAD * 2);
+
+  // How many fit at the readability floor; reserve a slot for "+N" on overflow.
+  const maxAtMin = Math.max(1, Math.floor(usable / (MIN_CHILD + GAP)));
+  let visible = children;
+  let overflowCount = 0;
+  if (n > maxAtMin) {
+    visible = children.slice(0, Math.max(1, maxAtMin - 1));
+    overflowCount = n - visible.length;
   }
+
+  const slots = visible.length + (overflowCount > 0 ? 1 : 0);
+  const maxChild = tierSize("session");
+  const childSize =
+    slots > 0
+      ? Math.max(MIN_CHILD, Math.min(maxChild, Math.floor(usable / slots - GAP)))
+      : maxChild;
+
+  const childY = Math.min(h - childSize / 2 - 26, rootY + 130);
+  const spacing = w / (slots + 1);
+  const fromAnchor = { x: cx, y: rootY + rootSize / 2 };
+  const links = [];
+
+  visible.forEach((child, i) => {
+    const el = nodeEls.get(child.id);
+    if (!el) return;
+    const x = spacing * (i + 1);
+    setNodeSize(el, childSize);
+    el.style.setProperty("--bounce-delay", `${(i % 4) * 0.3}s`); // stagger (AM-4)
+    positionNode(el, x, childY);
+    links.push({ from: fromAnchor, to: { x, y: childY - childSize / 2 }, session: child.session });
+  });
+
+  if (overflowCount > 0) {
+    const ov = ensureOverflowNode(stage);
+    ov.hidden = false;
+    const count = ov.querySelector(".overflow-count");
+    if (count) count.textContent = `+${overflowCount}`;
+    setNodeSize(ov, childSize);
+    const x = spacing * slots;
+    positionNode(ov, x, childY);
+    links.push({ from: fromAnchor, to: { x, y: childY - childSize / 2 }, session: null });
+  } else if (overflowEl) {
+    overflowEl.hidden = true;
+  }
+
   drawHarness(ensureHarnessLayer(stage), links, w, h);
 }
 
@@ -168,8 +248,11 @@ export function renderAnimMode(stage, sessions, onSelect) {
   const list = Array.isArray(sessions) ? sessions : [];
   const forest = buildForest(list);
 
+  lastStage = stage;
+  lastSessions = list;
   ensureRoot(stage);
   ensureHarnessLayer(stage);
+  ensureResizeObserver(stage);
 
   // Reconcile children by id (AM-8 G2): remove gone, create new, patch existing.
   const desired = new Set(list.map((s) => s.id));
