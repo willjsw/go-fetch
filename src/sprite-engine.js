@@ -52,16 +52,16 @@ export function frameToRects(grid, palette, stateColor) {
  * drawn above all frames, wrapped in a flip group so facing left is one
  * transform — frames are only ever authored facing right.
  */
-function buildSvg(sheet, anim, stateColor, overlayGrid, flip) {
+function buildSvg(sheet, anim, stateColor, overlayGrid, flip, palette = sheet.palette) {
   const [w, h] = sheet.size;
   const frames = anim.frames
     .map(
       (grid, i) =>
-        `<g class="spr-frame"${i === 0 ? "" : ' style="display:none"'}>${frameToRects(grid, sheet.palette, stateColor)}</g>`,
+        `<g class="spr-frame"${i === 0 ? "" : ' style="display:none"'}>${frameToRects(grid, palette, stateColor)}</g>`,
     )
     .join("");
   const overlay = overlayGrid
-    ? `<g class="spr-overlay">${frameToRects(overlayGrid, sheet.palette, stateColor)}</g>`
+    ? `<g class="spr-overlay">${frameToRects(overlayGrid, palette, stateColor)}</g>`
     : "";
   const flipAttr = flip ? ` transform="translate(${w} 0) scale(-1 1)"` : "";
   return `<svg class="spr" viewBox="0 0 ${w} ${h}" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><g class="spr-flip"${flipAttr}>${frames}${overlay}</g></svg>`;
@@ -113,12 +113,17 @@ export class SpriteAnimator {
    * @param {HTMLElement} host container that receives the sprite <svg>
    * @param {object} sheet sprite sheet data (palette/size/anims/overlays)
    * @param {object} [opts]
-   * @param {string} [opts.overlay] key into sheet.overlays drawn on top (e.g. "collar")
+   * @param {string} [opts.overlay] key into sheet.overlays drawn on top
+   * @param {Record<string,string>} [opts.palette] per-animator palette
+   *   override merged over the sheet's — e.g. the root dog turns its baked-in
+   *   collar pixels red while everyone else renders them as coat (GF-118 fix:
+   *   the collar moves with each pose instead of floating as an overlay).
    */
   constructor(host, sheet, opts = {}) {
     this.host = host;
     this.sheet = sheet;
     this.overlayKey = opts.overlay || null;
+    this.palette = opts.palette ? { ...sheet.palette, ...opts.palette } : sheet.palette;
     this.animName = null;
     this.stateColor = "";
     this.flip = false;
@@ -157,7 +162,7 @@ export class SpriteAnimator {
   _rebuild() {
     const anim = this.sheet.anims[this.animName];
     const overlay = this.overlayKey ? (this.sheet.overlays || {})[this.overlayKey] : null;
-    this.host.innerHTML = buildSvg(this.sheet, anim, this.stateColor, overlay, this.flip);
+    this.host.innerHTML = buildSvg(this.sheet, anim, this.stateColor, overlay, this.flip, this.palette);
     this.frameEls = Array.from(this.host.querySelectorAll(".spr-frame"));
     this.frame = 0;
     this.nextAt = 0; // advance on the next tick
