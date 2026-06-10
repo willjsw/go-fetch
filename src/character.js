@@ -1,46 +1,51 @@
-// GoFetch pixel-art character (Task 11 / GF-16; data split in GF-111).
+// GoFetch pixel-art character (Fetchy the retriever puppy, GF-108).
 //
-// A white, blocky "AI" character rendered as an inline SVG (24×24 pixel grid,
-// crisp edges) — lightweight, scalable, and version-controlled, with no binary
-// sprite assets. Each of the five states gets a distinct expression/pose
-// (WC-2/WC-3). The antenna light is tinted with the state color.
+// A golden retriever pup rendered as an inline SVG (24×24 pixel grid, crisp
+// edges). Parts are distinguished by color (golden fur, darker floppy ears,
+// cream muzzle/chest, dark nose/eyes) so it reads as a dog on the dark widget.
+// Each state gets a distinct face; the state color rides on the scattered dots.
 //
-// Visual data (colors, expressions, parts, size tiers) lives in
-// character-spec.js so it can be edited without touching this render logic.
+// Visual data lives in character-spec.js so it can be tuned without touching
+// this render logic (AM-7).
 
-import { STATE_COLOR, BODY, EXPRESSIONS, ARMS, ROOT_CLOUD, ROOT_VIEWBOX } from "./character-spec.js";
+import {
+  STATE_COLOR,
+  DOG_BASE,
+  PAWS,
+  COLLAR,
+  EXPRESSIONS,
+  scatterDots,
+  ROOT_CLOUD,
+  ROOT_VIEWBOX,
+} from "./character-spec.js";
 
 // Re-export so existing consumers can keep importing STATE_COLOR from here.
 export { STATE_COLOR };
 
 /**
- * Inline SVG for the character in a given state. Falls back to `idle`.
+ * Inline SVG for the pup in a given state. Falls back to `idle`.
  * @param {string} state one of working|waiting|error|done|idle|pending
  * @param {object} [opts]
  * @param {('root'|'session'|'subagent')} [opts.role] role tier — `root` adds a
- *   cloud and a floating motion (AM-10); others render the plain character.
- *   Omitting `opts` preserves the original single-argument behavior.
+ *   red collar and a cloud (the cloud is a separate group so only the pup bobs,
+ *   GF-108 #4). Omitting `opts` preserves the original single-argument behavior.
  * @returns {string} SVG markup
  */
 export function characterSvg(state, opts = {}) {
   const { role } = opts;
   const key = EXPRESSIONS[state] ? state : "idle";
   const color = STATE_COLOR[key];
-  // Head as a pixel-stepped square (1px corner cuts) instead of a smooth
-  // rounded rect — reads as dot/pixel art (WC-10). Same x3..21 / y4..20 bounds.
-  const head = "M4,4 H20 V5 H21 V19 H20 V20 H4 V19 H3 V5 H4 Z";
-  const arms = key === "working" ? ARMS : ""; // arms only while working (WC-11)
-  const cloud = role === "root" ? ROOT_CLOUD : ""; // floating cloud (AM-10)
+  const collar = role === "root" ? COLLAR : ""; // red collar on Claude Code pup
+  // Pup parts, back→front: silhouette, paws, collar, face, scattered dots.
+  const body = `${DOG_BASE}${PAWS}${collar}${EXPRESSIONS[key]}${scatterDots(color)}`;
   const roleClass = role ? ` gf-char-${role}` : "";
-  // Root uses an expanded viewBox so the bigger cloud has room (same per-unit
-  // scale, so the character itself is unchanged).
+  // Root uses an expanded viewBox so the cloud has room (same per-unit scale).
   const viewBox = role === "root" ? ROOT_VIEWBOX : "0 0 24 24";
+  // The cloud is a sibling group of the pup so motion targets only `.gf-body`
+  // and the cloud stays still (GF-108 #4).
+  const cloud = role === "root" ? `<g class="gf-cloud-layer">${ROOT_CLOUD}</g>` : "";
   return `<svg class="gf-char gf-char-${key}${roleClass}" viewBox="${viewBox}" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="${key}">
-    <rect x="11" y="1" width="2" height="3" fill="${BODY}"/>
-    <rect x="10" y="0" width="4" height="2" fill="${color}"/>
-    <path d="${head}" fill="${BODY}"/>
-    ${arms}
-    ${EXPRESSIONS[key]}
     ${cloud}
+    <g class="gf-body">${body}</g>
   </svg>`;
 }

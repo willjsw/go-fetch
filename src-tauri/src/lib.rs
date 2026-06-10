@@ -24,8 +24,10 @@ use std::time::Duration;
 use tauri::{Emitter, Manager};
 use tauri_plugin_notification::NotificationExt;
 
-/// How often the idle ticker checks for `Done` sessions to demote to `Idle`.
-const IDLE_TICK: Duration = Duration::from_secs(5);
+/// How often the idle ticker polls each session's state — demotes quiet `Done`
+/// sessions to `Idle` (ST-3) and evicts stale ones (SL-3). 3s keeps the widget's
+/// state reasonably fresh without busy-looping.
+const IDLE_TICK: Duration = Duration::from_secs(3);
 
 /// How often to poll `claude agents --json` for pre-existing sessions (SL-4 /
 /// D9). The first tick fires immediately (poll once at startup), then every 10s.
