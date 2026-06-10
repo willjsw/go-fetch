@@ -35,6 +35,13 @@ impl NotificationManager {
         session: &Session,
         settings: &NotificationSettings,
     ) -> Option<(String, String)> {
+        if session.pending {
+            // SL-5: a polling-seeded / just-started session is unconfirmed.
+            // It must never raise a notification on its own — only a real hook
+            // event (which clears `pending`) may. This guard makes the invariant
+            // explicit regardless of the underlying placeholder state.
+            return None;
+        }
         if !session.state.is_notifiable() {
             return None;
         }
@@ -174,6 +181,25 @@ mod tests {
         assert!(nm.should_notify(&make(), &ALL_ON).is_none(), "dedup suppresses repeat");
         nm.forget("h"); // session removed → dedup cleared (SL-2)
         assert!(nm.should_notify(&make(), &ALL_ON).is_some(), "after forget, same state notifies again");
+    }
+
+    #[test]
+    fn pending_session_never_notifies() {
+        // SL-5: even a state that would normally notify (Waiting) is suppressed
+        // while the session is still `pending` (unconfirmed by a real hook).
+        let nm = NotificationManager::new();
+        let mut s = session(
+            "p",
+            json!({"session_id":"p","hook_event_name":"Notification","notification_type":"permission_prompt","cwd":"/x/proj"}),
+        );
+        assert!(nm.should_notify(&s, &ALL_ON).is_some(), "confirmed waiting notifies");
+
+        let nm2 = NotificationManager::new();
+        s.pending = true; // not yet confirmed by a hook
+        assert!(
+            nm2.should_notify(&s, &ALL_ON).is_none(),
+            "SL-5: pending suppresses notification regardless of underlying state"
+        );
     }
 
     #[test]
