@@ -166,6 +166,14 @@ body {
     opacity: 0.65;
     animation: gf-sway 3.5s ease-in-out infinite;
   }
+  /* Root Fetchy (AM-10): the app symbol drifts gently as if floating on its
+     cloud. Declared after the per-state rules so it wins the `animation`
+     property even when the root also carries a state class (e.g. idle), and
+     keeps full opacity. */
+  .gf-char-root {
+    opacity: 1;
+    animation: gf-float 3.2s ease-in-out infinite;
+  }
   /* Busy flapping arms while working (WC-11). Arms only exist on the working
      character (character.js), so this never shows in other states. */
   .gf-arm-l {
@@ -196,6 +204,11 @@ body {
 @keyframes gf-sway {
   0%, 100% { transform: rotate(-2deg); }
   50% { transform: rotate(2deg); }
+}
+/* Root Fetchy floating drift (AM-10). */
+@keyframes gf-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-2px); }
 }
 /* Flap: arms move straight up/down, out of phase (one up while the other is
    down) for a rapid "파닥파닥" fidget. */
