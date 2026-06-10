@@ -26,7 +26,7 @@ use axum::{
 };
 use serde::Deserialize;
 
-use crate::session::{EventOutcome, SessionManager};
+use crate::session::{subagent_id, EventOutcome, SessionManager};
 
 /// Invoked after each state-affecting event (and idle transition) so the widget
 /// UI can refresh. `lib.rs` supplies a closure that emits the session snapshot
@@ -144,7 +144,14 @@ async fn handle_event(
             // creation, or removal) and warrants a widget refresh.
             let outcome = state.manager.handle_event(&event);
             if !matches!(outcome, EventOutcome::Ignored) {
-                (state.notify)(&event.session_id);
+                // Layer 2 (GF-108): a sub-agent event refreshes under its
+                // composite id so the notifier resolves to the (non-notifiable)
+                // sub-agent node — never the parent, which would mis-fire.
+                let notify_id = match event.agent_id.as_deref() {
+                    Some(aid) => subagent_id(&event.session_id, aid),
+                    None => event.session_id.clone(),
+                };
+                (state.notify)(&notify_id);
             }
             // GF-114 probe: dump sub-agent-related payloads so we can verify
             // whether `agent_id` is actually delivered (the Layer 2 gate). These
