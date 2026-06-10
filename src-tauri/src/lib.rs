@@ -122,7 +122,10 @@ fn set_autostart(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Shared, thread-safe session state machine (Task 4) + persisted settings.
-    let manager = session::SessionManager::new();
+    // `with_persistence` loads the set of sessions the user dismissed in a prior
+    // run (GF-107) so "Stop monitoring" survives a restart instead of the poll
+    // re-seeding the still-alive session.
+    let manager = session::SessionManager::with_persistence(session::dismissed_path());
     let settings_store = settings::SettingsStore::load();
 
     let app = tauri::Builder::default()
@@ -256,10 +259,12 @@ pub fn run() {
                     if let Some(entries) = preexisting::poll_active_sessions().await {
                         let now = std::time::Instant::now();
                         let mut seeded = 0usize;
+                        let mut alive = std::collections::HashSet::new();
                         for entry in &entries {
                             let Some(id) = entry.session_id.as_deref() else {
                                 continue;
                             };
+                            alive.insert(id.to_string());
                             if p_manager.seed_pending(id, entry.cwd.clone(), now) {
                                 seeded += 1;
                                 (p_notify)(id);
@@ -267,6 +272,11 @@ pub fn run() {
                                 p_manager.touch_seen(id, now);
                             }
                         }
+                        // Drop dismissed ids whose sessions have ended (absent
+                        // from this authoritative snapshot) so the persisted set
+                        // stays bounded (GF-107). No UI refresh: dismissed
+                        // sessions aren't shown either way.
+                        p_manager.prune_dismissed(&alive);
                         if seeded > 0 {
                             eprintln!(
                                 "[gofetch] pre-existing poll: {} active session(s), {seeded} newly shown",
