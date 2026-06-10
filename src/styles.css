@@ -123,6 +123,85 @@ body {
   font-size: 12px;
 }
 
+/* ---- Animated mode: nodes + harness (GF-112) ---- */
+.stage {
+  overflow: hidden; /* nodes/leashes are clipped to the stage, never scroll */
+}
+
+/* Single SVG layer behind the character nodes. */
+.harness-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+.harness-line {
+  fill: none;
+  stroke-width: 1.6;
+  opacity: 0.55;
+  stroke-linecap: round;
+}
+
+/* A character node is absolutely placed by its center point (left/top). */
+.anim-node {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  z-index: 1;
+  cursor: pointer;
+}
+.anim-node[data-role="root"] {
+  cursor: default;
+}
+.char-wrap {
+  display: block;
+}
+.node-title {
+  max-width: 88px;
+  font-size: 10px;
+  color: var(--muted);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Small thought bubble above a character showing its current work (AM-5). */
+.thought-bubble {
+  max-width: 120px;
+  padding: 3px 6px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #e8e8ec;
+  font-size: 10px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Spawn/despawn transitions only when motion is allowed; reduced-motion users
+   get instant add/remove (despawn removal is timer-backed in anim-mode.js). */
+@media (prefers-reduced-motion: no-preference) {
+  .anim-spawn {
+    animation: gf-spawn 0.32s ease-out;
+  }
+  .anim-despawn {
+    animation: gf-despawn 0.3s ease-in forwards;
+  }
+}
+@keyframes gf-spawn {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0.3); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+@keyframes gf-despawn {
+  from { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  to { opacity: 0; transform: translate(-50%, -50%) scale(0.3); }
+}
+
 /* ---- Pixel character (SVG) ---- */
 .gf-char {
   display: block;
