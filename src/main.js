@@ -74,10 +74,25 @@ let currentMode = (() => {
   }
 })();
 
-/** Replace the store snapshot and repaint the active mode. */
+/** Replace the store snapshot and schedule a coalesced repaint. */
 function setSessions(sessions) {
   currentSessions = Array.isArray(sessions) ? sessions : [];
-  renderActiveMode();
+  scheduleRender();
+}
+
+let rafPending = false;
+/**
+ * Coalesce rapid `sessions-update` events into one paint per frame (AM-8 G2):
+ * the backend pushes a snapshot on every hook, so a busy session could
+ * otherwise repaint several times per frame.
+ */
+function scheduleRender() {
+  if (rafPending) return;
+  rafPending = true;
+  requestAnimationFrame(() => {
+    rafPending = false;
+    renderActiveMode();
+  });
 }
 
 /** Switch the active render mode, persist it, and repaint (mode tabs, GF-110). */
@@ -120,7 +135,22 @@ function renderActiveMode() {
     renderCardsMode(list, currentSessions, showDetail);
   }
 
+  updateMotionState();
   syncOpenDetail();
+}
+
+/**
+ * Pause ambient bounce when nothing needs attention (G1): if no session is
+ * working/waiting/error, the stage goes "quiet" (CSS pauses the bounce). The
+ * idle nap and root float stay as charm.
+ */
+function updateMotionState() {
+  const active = currentSessions.some(
+    (s) =>
+      !s.pending &&
+      (s.state === "working" || s.state === "waiting" || s.state === "error"),
+  );
+  document.body.classList.toggle("gf-quiet", !active);
 }
 
 /** Reflect the active mode on the tab buttons (.active + aria-selected). */
@@ -311,6 +341,13 @@ window.addEventListener("DOMContentLoaded", () => {
   // Resize support (WC-8): cap max size to 1/4 of the screen + wire handles.
   applyMaxSize();
   wireResizeHandles();
+
+  // Pause all animation while the window is hidden/minimized (G1 perf): the
+  // ambient app must not burn CPU/battery when the user isn't looking.
+  const applyPaused = () =>
+    document.body.classList.toggle("gf-paused", document.hidden);
+  document.addEventListener("visibilitychange", applyPaused);
+  applyPaused();
 
   refresh();
   listen("sessions-update", (event) => setSessions(event.payload));
