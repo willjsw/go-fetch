@@ -36,14 +36,17 @@ const LEASH_SUB = 0.2; // how far a sub-agent may wander from its session
 const DRAG_THRESHOLD = 5; // px of pointer travel before a click becomes a drag
 
 /** Per-state stroll personality: what to do on arrival, for how long, and how
- *  far the next hop goes. Speeds are in floor-units/second. */
+ *  far the next hop goes. Speeds are in floor-units/second. States that need
+ *  the USER's attention (waiting / error / done) pin in place — `roam: false`
+ *  means the dog stops strolling entirely and acts out its motion where it
+ *  stands, so the signal can't wander out of the corner of your eye. */
 const BEHAVIOR = {
-  working: { act: 3.5, actVar: 3.5, hop: 0.1, speed: 0.1 }, // digs long, short hops
-  waiting: { act: 2.5, actVar: 2.5, hop: 0.07, speed: 0.08 }, // spins, barely moves
-  error: { act: 2.0, actVar: 2.0, hop: 0.09, speed: 0.12 }, // growls, paces tersely
-  done: { act: 1.6, actVar: 1.4, hop: 0.22, speed: 0.14 }, // prances around with the bone
-  idle: { act: 8.0, actVar: 8.0, hop: 0.08, speed: 0.05 }, // sleeps, rarely relocates
-  pending: { act: 2.0, actVar: 2.0, hop: 0.12, speed: 0.08 }, // wanders, looking around
+  working: { act: 3.5, actVar: 3.5, hop: 0.1, speed: 0.1, roam: true }, // digs long, short hops
+  waiting: { act: 2.5, actVar: 2.5, hop: 0.07, speed: 0.08, roam: false }, // spins in place
+  error: { act: 2.0, actVar: 2.0, hop: 0.09, speed: 0.12, roam: false }, // growls in place
+  done: { act: 1.6, actVar: 1.4, hop: 0.22, speed: 0.14, roam: false }, // shows off the bone in place
+  idle: { act: 8.0, actVar: 8.0, hop: 0.08, speed: 0.05, roam: true }, // sleeps, rarely relocates
+  pending: { act: 2.0, actVar: 2.0, hop: 0.12, speed: 0.08, roam: true }, // wanders, looking around
 };
 const ROOT_SPEED = 0.05; // the big dog strolls slowly, stately
 
@@ -174,9 +177,15 @@ function setEntityState(ent, state) {
   if (ent.state === key) return;
   ent.state = key;
   ent.el.dataset.state = key;
-  // A state flip interrupts whatever the dog was doing: act out the new state
-  // promptly (a finished dig → fetch prance should be immediate).
-  if (ent.mode === "act") {
+  const b = BEHAVIOR[key] || BEHAVIOR.idle;
+  if (!b.roam && ent.mode !== "held") {
+    // Attention states (waiting/error/done) pin immediately: stop mid-stroll
+    // and act the new motion where the dog stands.
+    ent.mode = "act";
+    ent.modeLeft = b.act;
+  } else if (ent.mode === "act") {
+    // A state flip interrupts whatever the dog was doing: act out the new
+    // state promptly (a finished dig → fetch should be immediate).
     ent.modeLeft = Math.min(ent.modeLeft, 0.3);
   }
   applyAnim(ent);
@@ -264,6 +273,11 @@ function stepBehavior(ent, dt) {
   if (ent.mode === "act") {
     ent.modeLeft -= dt;
     if (ent.modeLeft <= 0) {
+      if (!b.roam) {
+        // Needs the user: keep acting in place until the state changes.
+        ent.modeLeft = b.act;
+        return;
+      }
       ent.mode = "stroll";
       pickTarget(ent);
       applyAnim(ent);
