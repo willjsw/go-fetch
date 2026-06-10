@@ -405,6 +405,22 @@ impl SessionManager {
         self.tick_evict_at(Instant::now())
     }
 
+    /// Seed a pre-existing session discovered by polling (SL-4) — but only if we
+    /// don't already track it (**hook-first**, SL-5). The seeded session is
+    /// `pending` (state unconfirmed) and non-notifiable; a later real hook event
+    /// confirms its state and clears `pending`. Returns `true` if newly seeded.
+    pub fn seed_pending(&self, session_id: &str, cwd: Option<String>, now: Instant) -> bool {
+        let mut sessions = self.sessions.write().expect("session lock poisoned");
+        if sessions.contains_key(session_id) {
+            return false; // hook-tracked (or already seeded) session wins
+        }
+        let mut session = Session::new(session_id, cwd, now);
+        session.pending = true;
+        session.state = SessionState::Idle; // neutral, non-notifiable
+        sessions.insert(session_id.to_string(), session);
+        true
+    }
+
     /// Remove a session entirely. Returns `true` if it was present. Unlike
     /// `tick_idle` (which only demotes to `Idle`), this drops the entry so the
     /// widget card disappears — used on `SessionEnd` (SL-2) and liveness
@@ -602,6 +618,26 @@ mod tests {
         let later = t0 + Duration::from_secs(31);
         assert_eq!(m.tick_idle_at(later), vec!["s".to_string()]);
         assert_eq!(m.snapshot()[0].state, SessionState::Idle);
+    }
+
+    #[test]
+    fn seed_pending_is_hook_first() {
+        let m = SessionManager::new();
+        // Seeds a brand-new pre-existing session as pending (SL-4).
+        assert!(m.seed_pending("s", Some("/x/proj".into()), Instant::now()));
+        let snap = m.snapshot();
+        assert!(snap[0].pending, "seeded session is unconfirmed");
+        assert_eq!(snap[0].project_name, "proj");
+        assert!(!snap[0].state.is_notifiable(), "seeded session must not notify (SL-5)");
+        // Re-seeding the same id is a no-op (already tracked).
+        assert!(!m.seed_pending("s", None, Instant::now()));
+
+        // A hook-tracked session is never overwritten by seeding (hook-first).
+        m.handle_event(&event("h", "PreToolUse"));
+        assert!(!m.seed_pending("h", None, Instant::now()));
+        let h = m.snapshot().into_iter().find(|x| x.id == "h").unwrap();
+        assert!(!h.pending, "hook-tracked session stays confirmed");
+        assert_eq!(h.state, SessionState::Working);
     }
 
     #[test]

@@ -13,6 +13,7 @@
 
 pub mod hook_installer;
 pub mod notification;
+pub mod preexisting;
 pub mod server;
 pub mod session;
 pub mod settings;
@@ -25,6 +26,11 @@ use tauri_plugin_notification::NotificationExt;
 
 /// How often the idle ticker checks for `Done` sessions to demote to `Idle`.
 const IDLE_TICK: Duration = Duration::from_secs(5);
+
+/// How often to poll `claude agents --json` for pre-existing sessions (SL-4 /
+/// D9). The first tick fires immediately (poll once at startup), then every 10s.
+/// Polling pauses while the widget is hidden to save battery (D9).
+const PREEXISTING_POLL_INTERVAL: Duration = Duration::from_secs(10);
 
 /// Event the widget frontend listens on for session snapshots.
 const SESSIONS_UPDATE_EVENT: &str = "sessions-update";
@@ -171,6 +177,38 @@ pub fn run() {
                     // the snapshot and refreshes + clears dedup.
                     for id in i_manager.tick_evict() {
                         (i_notify)(&id);
+                    }
+                }
+            });
+
+            // Pre-existing session detection (SL-4): poll `claude agents --json`
+            // off-thread to surface sessions that started before GoFetch (or are
+            // stalled emitting no events). First tick fires immediately (poll at
+            // startup), then every 10s; polling pauses while the widget is hidden
+            // (D9). Seeding is hook-first and best-effort (DI-4): any failure just
+            // degrades to hook-only.
+            let p_manager = manager.clone();
+            let p_notify = notify.clone();
+            let p_handle = handle.clone();
+            tauri::async_runtime::spawn(async move {
+                let mut ticker = tokio::time::interval(PREEXISTING_POLL_INTERVAL);
+                loop {
+                    ticker.tick().await;
+                    // Skip the poll while the widget is hidden (battery, D9).
+                    let visible = p_handle
+                        .get_webview_window("main")
+                        .and_then(|w| w.is_visible().ok())
+                        .unwrap_or(true);
+                    if !visible {
+                        continue;
+                    }
+                    for entry in preexisting::poll_active_sessions().await {
+                        if let Some(id) = entry.session_id.as_deref() {
+                            if p_manager.seed_pending(id, entry.cwd.clone(), std::time::Instant::now())
+                            {
+                                (p_notify)(id);
+                            }
+                        }
                     }
                 }
             });
