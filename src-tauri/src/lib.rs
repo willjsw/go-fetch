@@ -137,6 +137,10 @@ pub fn run() {
                             .body(body)
                             .show();
                     }
+                } else {
+                    // Session no longer in the snapshot → it was removed
+                    // (SessionEnd / eviction). Clear its dedup record (SL-2).
+                    notifications.forget(session_id);
                 }
                 apply_window_prefs(&n_handle, &n_settings, &n_manager);
             });
