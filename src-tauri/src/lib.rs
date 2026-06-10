@@ -120,8 +120,15 @@ pub fn run() {
         // Persist widget position/size across restarts (WC-9). Only SIZE +
         // POSITION are tracked — visibility stays under our tray/auto-hide
         // control (WC-5), so the plugin never fights the show/hide logic.
+        //
+        // The filename is versioned (not the default `.window-state.json`) so
+        // that bumping the default window size (WC-12: 360×600) invalidates any
+        // stale geometry saved under the old default — otherwise the restored
+        // old size would mask the new default on launch (GF-99). Future default
+        // changes can bump this name again to reset cleanly.
         .plugin(
             tauri_plugin_window_state::Builder::default()
+                .with_filename("gofetch-window-state.json")
                 .with_state_flags(
                     tauri_plugin_window_state::StateFlags::SIZE
                         | tauri_plugin_window_state::StateFlags::POSITION,
