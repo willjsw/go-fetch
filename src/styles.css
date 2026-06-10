@@ -285,11 +285,41 @@ body {
   background: rgba(255, 255, 255, 0.18);
 }
 
+/* ---- Window controls (WC-6: hide / quit) ---- */
+.winctl {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 6;
+  display: flex;
+  gap: 4px;
+}
+.winctl-btn {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 22px;
+  cursor: pointer;
+}
+.winctl-btn:hover {
+  background: rgba(255, 255, 255, 0.16);
+  color: var(--accent);
+}
+.winctl-btn.close:hover {
+  background: rgba(248, 113, 113, 0.85);
+  color: #fff;
+}
+
 /* ---- Settings (gear + toggles, Task 12) ---- */
 .gear {
   position: absolute;
   top: 8px;
-  right: 8px;
+  left: 8px;
   z-index: 5;
   width: 22px;
   height: 22px;

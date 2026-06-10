@@ -10,6 +10,13 @@
 
   <body>
     <main class="widget" id="app" data-tauri-drag-region>
+      <!-- Window controls (WC-6). Children of the drag region, so they stay
+           clickable (data-tauri-drag-region only affects the element it's on).
+           − hides to tray (restored via tray left-click); × fully quits. -->
+      <div class="winctl">
+        <button class="winctl-btn min" id="win-min" type="button" title="Hide (tray로 복원)" aria-label="Hide">−</button>
+        <button class="winctl-btn close" id="win-close" type="button" title="Quit GoFetch" aria-label="Quit">×</button>
+      </div>
       <button class="gear" id="gear" type="button" title="Settings" aria-label="Settings">⚙</button>
       <!-- Empty state (DI-6): shown when no Claude Code session is active. -->
       <section class="empty-state" id="empty-state">
