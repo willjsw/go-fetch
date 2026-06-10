@@ -27,6 +27,18 @@
 
       <!-- Session list (filled by later tasks: state machine + visualization). -->
       <section class="sessions" id="sessions" hidden></section>
+
+      <!-- Custom resize handles (WC-8). A frameless window has no native resize
+           grips (Tauri #8519), so edges/corners trigger startResizeDragging.
+           Wired in main.js; max size is capped to 1/4 of the screen area. -->
+      <div class="rsz n" data-resize="North"></div>
+      <div class="rsz s" data-resize="South"></div>
+      <div class="rsz e" data-resize="East"></div>
+      <div class="rsz w" data-resize="West"></div>
+      <div class="rsz ne" data-resize="NorthEast"></div>
+      <div class="rsz nw" data-resize="NorthWest"></div>
+      <div class="rsz se" data-resize="SouthEast"></div>
+      <div class="rsz sw" data-resize="SouthWest"></div>
     </main>
   </body>
 </html>

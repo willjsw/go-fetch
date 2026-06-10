@@ -11,7 +11,42 @@ import { characterSvg } from "./character.js";
 
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
-const { getCurrentWindow } = window.__TAURI__.window;
+const { getCurrentWindow, currentMonitor, LogicalSize } = window.__TAURI__.window;
+
+/**
+ * Cap the widget's maximum size to 1/4 of the screen *area* — each side ×0.5
+ * (WC-8 / D3). Recomputed at startup; uses logical pixels so it behaves the
+ * same on Retina. Best-effort: if the monitor query or permission is
+ * unavailable, the window is simply left unconstrained.
+ */
+async function applyMaxSize() {
+  try {
+    const mon = await currentMonitor();
+    if (!mon) return;
+    const sf = mon.scaleFactor || 1;
+    const logW = mon.size.width / sf;
+    const logH = mon.size.height / sf;
+    const maxW = Math.max(180, Math.floor(logW * 0.5));
+    const maxH = Math.max(220, Math.floor(logH * 0.5));
+    await getCurrentWindow().setMaxSize(new LogicalSize(maxW, maxH));
+  } catch (_err) {
+    /* leave unconstrained on failure */
+  }
+}
+
+/** Wire the custom resize handles (WC-8): frameless windows have no native
+ * grips, so each edge/corner starts a resize drag in its direction (F12). */
+function wireResizeHandles() {
+  document.querySelectorAll(".rsz").forEach((handle) => {
+    handle.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      getCurrentWindow()
+        .startResizeDragging(handle.dataset.resize)
+        .catch(() => {});
+    });
+  });
+}
 
 const STATE_VISUALS = {
   working: { label: "Working", icon: "⚙" },
@@ -226,6 +261,10 @@ window.addEventListener("DOMContentLoaded", () => {
     winClose.addEventListener("click", () => {
       invoke("quit_app").catch(() => {});
     });
+
+  // Resize support (WC-8): cap max size to 1/4 of the screen + wire handles.
+  applyMaxSize();
+  wireResizeHandles();
 
   refresh();
   listen("sessions-update", (event) => renderSessions(event.payload));
