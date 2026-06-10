@@ -299,6 +299,19 @@ impl SessionManager {
         self.tick_idle_at(Instant::now())
     }
 
+    /// Remove a session entirely. Returns `true` if it was present. Unlike
+    /// `tick_idle` (which only demotes to `Idle`), this drops the entry so the
+    /// widget card disappears — used on `SessionEnd` (SL-2) and liveness
+    /// eviction (SL-3). This is the first eviction path in the manager; before
+    /// Sprint 2 a session could only ever reach `Idle` and lingered forever.
+    pub fn remove(&self, session_id: &str) -> bool {
+        self.sessions
+            .write()
+            .expect("session lock poisoned")
+            .remove(session_id)
+            .is_some()
+    }
+
     /// Snapshot of all sessions, sorted by monitoring priority then project
     /// name, with `idle_seconds` filled in. Used by the widget UI (Task 5).
     pub fn snapshot(&self) -> Vec<Session> {
@@ -437,6 +450,17 @@ mod tests {
         let later = t0 + Duration::from_secs(31);
         assert_eq!(m.tick_idle_at(later), vec!["s".to_string()]);
         assert_eq!(m.snapshot()[0].state, SessionState::Idle);
+    }
+
+    #[test]
+    fn remove_drops_session_entirely() {
+        let m = SessionManager::new();
+        m.handle_event(&event("s", "PreToolUse"));
+        assert_eq!(m.len(), 1);
+        // remove drops it completely (not just demote to Idle like tick_idle).
+        assert!(m.remove("s"), "remove returns true when present");
+        assert!(m.is_empty(), "removed session must not linger");
+        assert!(!m.remove("s"), "removing an absent session returns false");
     }
 
     #[test]

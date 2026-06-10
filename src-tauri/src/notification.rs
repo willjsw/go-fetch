@@ -48,6 +48,16 @@ impl NotificationManager {
         last.insert(session.id.clone(), session.state);
         Some(message_for(session))
     }
+
+    /// Forget a session's dedup record. Call when a session is removed
+    /// (`SessionEnd`/eviction) so the same `session_id` reused later starts
+    /// clean and isn't wrongly suppressed (SL-2).
+    pub fn forget(&self, session_id: &str) {
+        self.last_notified
+            .lock()
+            .expect("notify lock poisoned")
+            .remove(session_id);
+    }
 }
 
 /// Build the notification `(title, body)` for a notifiable session state.
@@ -149,6 +159,21 @@ mod tests {
         assert!(nm.should_notify(&waiting, &ALL_ON).is_some());
         assert!(nm.should_notify(&done, &ALL_ON).is_some(), "different state notifies");
         assert!(nm.should_notify(&waiting, &ALL_ON).is_some(), "back to waiting notifies again");
+    }
+
+    #[test]
+    fn forget_clears_dedup_so_state_renotifies() {
+        let nm = NotificationManager::new();
+        let make = || {
+            session(
+                "h",
+                json!({"session_id":"h","hook_event_name":"Notification","notification_type":"permission_prompt","cwd":"/x/p"}),
+            )
+        };
+        assert!(nm.should_notify(&make(), &ALL_ON).is_some(), "first notifies");
+        assert!(nm.should_notify(&make(), &ALL_ON).is_none(), "dedup suppresses repeat");
+        nm.forget("h"); // session removed → dedup cleared (SL-2)
+        assert!(nm.should_notify(&make(), &ALL_ON).is_some(), "after forget, same state notifies again");
     }
 
     #[test]
