@@ -140,16 +140,13 @@ function renderActiveMode() {
 }
 
 /**
- * Pause ambient bounce when nothing needs attention (G1): if no session is
- * working/waiting/error, the stage goes "quiet" (CSS pauses the bounce). The
- * idle nap and root float stay as charm.
+ * Pause ambient bounce only when everything is calm (G1): the stage goes
+ * "quiet" when every session is idle/pending. Anything else — working, and
+ * especially done/waiting/error — keeps bouncing so a finished, waiting, or
+ * errored session stays eye-catching. The idle nap and root float remain.
  */
 function updateMotionState() {
-  const active = currentSessions.some(
-    (s) =>
-      !s.pending &&
-      (s.state === "working" || s.state === "waiting" || s.state === "error"),
-  );
+  const active = currentSessions.some((s) => !s.pending && s.state !== "idle");
   document.body.classList.toggle("gf-quiet", !active);
 }
 
