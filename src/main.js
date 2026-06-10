@@ -9,7 +9,8 @@
 
 import { STATE_COLOR } from "./character-spec.js";
 import { SpriteAnimator } from "./sprite-engine.js";
-import dogSheet from "./sprites/dog.js";
+import { activeSheet, activeCharacter, setCharacter, onCharacterChange } from "./character-store.js";
+import { CHARACTER_LABELS } from "./sprites/index.js";
 import { renderCardsMode } from "./cards-mode.js";
 import { renderAnimMode } from "./anim-mode.js";
 import { STATE_VISUALS, visualKey, escapeHtml, formatElapsed } from "./utils.js";
@@ -196,6 +197,15 @@ export async function openSettings() {
     <div class="settings-group">Widget</div>
     <label class="toggle"><input type="checkbox" class="settings-toggle" data-key="always_on_top" ${w.always_on_top ? "checked" : ""}/> Always on top</label>
     <label class="toggle"><input type="checkbox" class="settings-toggle" data-key="auto_hide" ${w.auto_hide ? "checked" : ""}/> Auto-hide when idle</label>
+    <div class="settings-group">Character</div>
+    <label class="toggle">캐릭터
+      <select id="character-select" class="char-select">
+        ${CHARACTER_LABELS.map(
+          ([id, label]) =>
+            `<option value="${id}" ${id === activeCharacter() ? "selected" : ""}>${label}</option>`,
+        ).join("")}
+      </select>
+    </label>
     <div class="settings-group">General</div>
     <label class="toggle"><input type="checkbox" id="autostart-toggle" ${autostart ? "checked" : ""}/> Start on login</label>
     <button class="detail-close" type="button">Close</button>`;
@@ -222,6 +232,9 @@ export async function openSettings() {
   panel.querySelectorAll(".settings-toggle").forEach((cb) =>
     cb.addEventListener("change", persist),
   );
+  panel.querySelector("#character-select").addEventListener("change", (e) => {
+    setCharacter(e.target.value);
+  });
   panel.querySelector("#autostart-toggle").addEventListener("change", async (e) => {
     try {
       await invoke("set_autostart", { enabled: e.target.checked });
@@ -274,8 +287,9 @@ export function showDetail(sessionId) {
     <button class="detail-close" type="button">Close</button>
     ${canStop ? '<button class="detail-stop" type="button">Stop monitoring</button>' : ""}`;
   // Live sprite in the popover head — destroyed by closeDetail (GF-116).
-  detailSprite = new SpriteAnimator(popover.querySelector(".detail-head .char"), dogSheet);
-  detailSprite.setAnim(dogSheet.stateAnims[state] || "idle", STATE_COLOR[state]);
+  const sheet = activeSheet();
+  detailSprite = new SpriteAnimator(popover.querySelector(".detail-head .char"), sheet);
+  detailSprite.setAnim(sheet.stateAnims[state] || "idle", STATE_COLOR[state]);
   popover.querySelector(".detail-close").addEventListener("click", closeDetail);
   const stopBtn = popover.querySelector(".detail-stop");
   if (stopBtn)
@@ -312,13 +326,38 @@ async function refresh() {
   }
 }
 
-window.addEventListener("DOMContentLoaded", () => {
-  // The empty-state dog naps with a live sprite too (GF-116). The animator
-  // lives for the app's lifetime; the shared ticker pauses it when hidden.
+/** Empty-state character: rebuilt whenever the character changes (GF-118). */
+let emptySprite = null;
+function mountEmptyChar() {
   const emptyChar = document.getElementById("empty-char");
-  if (emptyChar) {
-    new SpriteAnimator(emptyChar, dogSheet).setAnim("sleep", STATE_COLOR.idle);
-  }
+  if (!emptyChar) return;
+  if (emptySprite) emptySprite.destroy();
+  const sheet = activeSheet();
+  emptySprite = new SpriteAnimator(emptyChar, sheet);
+  emptySprite.setAnim(sheet.stateAnims.idle || "idle", STATE_COLOR.idle);
+}
+
+window.addEventListener("DOMContentLoaded", () => {
+  // The empty-state character naps with a live sprite too (GF-116). The
+  // animator lives until a character switch; the ticker pauses it when hidden.
+  mountEmptyChar();
+
+  // Character switch (GF-118): cards/stage tear down via their own hooks —
+  // here we rebuild the empty-state sprite and repaint the active mode. Only a
+  // session detail is closed (its sprite holds the old sheet); the settings
+  // panel stays open so the user can keep browsing characters.
+  onCharacterChange(() => {
+    mountEmptyChar();
+    const open = document.querySelector(".detail-backdrop[data-session-id]");
+    if (open) {
+      if (detailSprite) {
+        detailSprite.destroy();
+        detailSprite = null;
+      }
+      open.remove();
+    }
+    renderActiveMode();
+  });
   const gear = document.getElementById("gear");
   if (gear) gear.addEventListener("click", openSettings);
 

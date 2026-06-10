@@ -584,3 +584,19 @@ body {
   accent-color: var(--done);
   cursor: pointer;
 }
+
+/* Character picker (GF-118). */
+.settings-panel .char-select {
+  margin-left: auto;
+  padding: 3px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #e8e8ec;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.settings-panel .char-select option {
+  background: #1c1c22;
+}

@@ -15,7 +15,7 @@
 
 import { STATE_COLOR, SIZE_TIERS } from "./character-spec.js";
 import { SpriteAnimator } from "./sprite-engine.js";
-import dogSheet from "./sprites/dog.js";
+import { activeSheet, onCharacterChange } from "./character-store.js";
 import { escapeHtml, visualKey } from "./utils.js";
 import { buildForest } from "./tree.js";
 import { ensureHarnessLayer, drawHarness } from "./harness.js";
@@ -121,9 +121,11 @@ function makeEntity(id, role, session, parent) {
     dragMoved: false,
     sprite: null,
   };
+  const sheet = activeSheet();
   ent.wrapEl = el.querySelector(".char-wrap");
-  ent.sprite = new SpriteAnimator(ent.wrapEl, dogSheet, {
-    overlay: role === "root" ? "collar" : null,
+  ent.sprite = new SpriteAnimator(ent.wrapEl, sheet, {
+    // The collar marks the root; only sheets that define the overlay get it.
+    overlay: role === "root" && sheet.overlays ? "collar" : null,
   });
   el.dataset.state = ent.state;
   applyAnim(ent);
@@ -206,10 +208,21 @@ function applyAnim(ent) {
       ent.sprite.setFlip(ent.facing);
     }
   } else {
-    ent.sprite.setAnim(dogSheet.stateAnims[ent.state] || "idle", color);
+    ent.sprite.setAnim(activeSheet().stateAnims[ent.state] || "idle", color);
     ent.sprite.setFlip(ent.facing);
   }
 }
+
+// Character switch (GF-118): tear every entity down immediately — the next
+// render rebuilds the cast with the new sheet at the same logical positions
+// being lost is fine; they re-scatter around their parents.
+onCharacterChange(() => {
+  for (const ent of entities.values()) {
+    ent.sprite.destroy();
+    ent.el.remove();
+  }
+  entities.clear();
+});
 
 // ---------------------------------------------------------------------------
 // Behavior (per-frame)
@@ -433,7 +446,7 @@ function wirePointer(ent) {
         ent.held = true;
         ent.mode = "held";
         el.classList.add("held");
-        ent.sprite.setAnim(dogSheet.stateAnims[ent.state] || "idle", STATE_COLOR[ent.state]);
+        ent.sprite.setAnim(activeSheet().stateAnims[ent.state] || "idle", STATE_COLOR[ent.state]);
       }
       const dims = stageDims();
       dims.density = densityScale();
