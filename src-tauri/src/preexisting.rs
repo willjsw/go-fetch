@@ -86,45 +86,61 @@ fn claude_command() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("claude")) // last resort: rely on PATH
 }
 
-/// Run `claude agents --json` as a child process and return the active sessions.
-/// Best-effort: missing CLI, timeout, non-zero exit, or malformed JSON all yield
-/// an empty list so the caller degrades to hook-only (DI-4). `stdin` is null so
-/// the command can never block on a prompt. The child PATH is augmented with the
-/// common bin dirs so both the resolved binary and anything it shells out to are
-/// found regardless of how GoFetch itself was launched (GF-100).
-pub async fn poll_active_sessions() -> Vec<AgentEntry> {
+/// Poll `claude agents --json` for the currently-active sessions.
+///
+/// Returns `Some(sessions)` on a clean run (possibly empty), or `None` if the
+/// command could not be run / failed — letting the caller distinguish "no
+/// sessions" from "couldn't check" (so a failed poll never evicts everything).
+///
+/// Runs the command **synchronously on a blocking thread** (`spawn_blocking` +
+/// `std::process`) rather than `tokio::process`: under Tauri's async runtime the
+/// child spawned but its output was never received and the `await` only resolved
+/// on timeout, so nothing was ever seeded (GF-101). A hard timeout still guards
+/// against a hung CLI (DI-4). `stdin` is null so it can't block on a prompt, and
+/// the child PATH is augmented with the common bin dirs (GF-100).
+pub async fn poll_active_sessions() -> Option<Vec<AgentEntry>> {
+    match tokio::time::timeout(POLL_TIMEOUT, tokio::task::spawn_blocking(run_claude_agents)).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(_)) => {
+            eprintln!("[gofetch] pre-existing poll task panicked");
+            None
+        }
+        Err(_) => {
+            eprintln!("[gofetch] `claude agents --json` timed out; pre-existing detection skipped");
+            None
+        }
+    }
+}
+
+/// Blocking invocation of `claude agents --json`. `Some` on a clean exit, `None`
+/// on spawn error or non-zero exit (logged for diagnosability).
+fn run_claude_agents() -> Option<Vec<AgentEntry>> {
     let bin = claude_command();
     let path = std::env::var("PATH").unwrap_or_default();
-    let output = tokio::process::Command::new(&bin)
+    let result = std::process::Command::new(&bin)
         .args(["agents", "--json"])
         .env("PATH", format!("{path}:/opt/homebrew/bin:/usr/local/bin"))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .output();
-    match tokio::time::timeout(POLL_TIMEOUT, output).await {
-        Ok(Ok(out)) if out.status.success() => {
-            parse_agents_json(&String::from_utf8_lossy(&out.stdout))
+    match result {
+        Ok(out) if out.status.success() => {
+            Some(parse_agents_json(&String::from_utf8_lossy(&out.stdout)))
         }
-        // Degrade to hook-only on any failure, but log it so the cause is
-        // diagnosable in dev (these were previously silent — GF-100).
-        Ok(Ok(out)) => {
+        Ok(out) => {
             eprintln!(
                 "[gofetch] `claude agents --json` exited with {:?}; pre-existing detection skipped",
                 out.status.code()
             );
-            Vec::new()
+            None
         }
-        Ok(Err(e)) => {
+        Err(e) => {
             eprintln!(
                 "[gofetch] could not run `{}`: {e}; pre-existing detection disabled",
                 bin.display()
             );
-            Vec::new()
-        }
-        Err(_) => {
-            eprintln!("[gofetch] `claude agents --json` timed out; pre-existing detection skipped");
-            Vec::new()
+            None
         }
     }
 }

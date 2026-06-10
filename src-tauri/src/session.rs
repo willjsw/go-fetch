@@ -26,14 +26,13 @@ use crate::server::HookEvent;
 /// considered idle (ST-3). The idle state is widget-side, not a hook event.
 const DEFAULT_IDLE_AFTER: Duration = Duration::from_secs(60);
 
-/// Default time after the **last event of any kind** before a session with no
-/// further signal is evicted entirely (SL-3 safety net). This is the backstop
-/// for a missed `SessionEnd` — Ctrl+C, terminal force-close, SIGKILL, or a crash
-/// where the hook never fires (verified unreliable: PRD Sprint2 §2.1 F3). Set
-/// generously to 1h (D5) so a genuinely-alive-but-quiet session (e.g. a long
-/// permission wait) is never dropped prematurely; PID-based liveness (SL-4)
-/// evicts dead sessions much sooner when the polling layer is available.
-const DEFAULT_STALE_AFTER: Duration = Duration::from_secs(60 * 60);
+/// Default time after a session was **last seen alive** before it is evicted
+/// (SL-3). "Last seen" is refreshed both by hook events and by the pre-existing
+/// poll spotting the session in `claude agents --json` (SL-4), so a still-alive
+/// session is never dropped — only one whose process is actually gone (and which
+/// emitted no `SessionEnd`: Ctrl+C / force-close / SIGKILL / crash, PRD §2.1 F3)
+/// disappears, ~5 minutes after it dies.
+const DEFAULT_STALE_AFTER: Duration = Duration::from_secs(5 * 60);
 
 /// The five monitored session states, ordered by monitoring priority.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize)]
@@ -107,9 +106,16 @@ pub struct Session {
     /// real hook event clears it. The five-state engine is unchanged: `pending`
     /// is a display-layer flag layered on a non-notifiable underlying state.
     pub pending: bool,
-    /// Instant of the last event for this session. Not serialized.
+    /// Instant of the last hook event for this session — drives the Done→Idle
+    /// neglect timer (ST-3) and `idle_seconds`. Not serialized.
     #[serde(skip)]
     pub last_activity: Instant,
+    /// Instant the session was last confirmed alive — by a hook event **or** by
+    /// the pre-existing poll seeing it in `claude agents --json` (SL-4). Drives
+    /// eviction (SL-3), kept separate from `last_activity` so the poll keeping a
+    /// session alive doesn't reset its neglect timer. Not serialized.
+    #[serde(skip)]
+    pub last_seen: Instant,
 }
 
 impl Session {
@@ -131,6 +137,7 @@ impl Session {
             summary: String::new(),
             pending: false,
             last_activity: now,
+            last_seen: now,
         }
     }
 
@@ -293,6 +300,7 @@ impl SessionManager {
                     .entry(event.session_id.clone())
                     .or_insert_with(|| Session::new(&event.session_id, event.cwd.clone(), now));
                 session.last_activity = now;
+                session.last_seen = now;
                 if let Some(cwd) = &event.cwd {
                     session.cwd = Some(cwd.clone());
                     session.project_name = project_name_from_cwd(cwd);
@@ -331,6 +339,7 @@ impl SessionManager {
             .or_insert_with(|| Session::new(&event.session_id, event.cwd.clone(), now));
 
         session.last_activity = now;
+        session.last_seen = now;
         // A real activity event confirms the session's state (clears SL-5 pending).
         session.pending = false;
         if let Some(cwd) = &event.cwd {
@@ -392,7 +401,7 @@ impl SessionManager {
         let mut sessions = self.sessions.write().expect("session lock poisoned");
         let dead: Vec<String> = sessions
             .values()
-            .filter(|s| now.saturating_duration_since(s.last_activity) >= self.stale_after)
+            .filter(|s| now.saturating_duration_since(s.last_seen) >= self.stale_after)
             .map(|s| s.id.clone())
             .collect();
         for id in &dead {
@@ -419,6 +428,20 @@ impl SessionManager {
         session.state = SessionState::Idle; // neutral, non-notifiable
         sessions.insert(session_id.to_string(), session);
         true
+    }
+
+    /// Refresh a tracked session's liveness timestamp because the pre-existing
+    /// poll just saw it alive (SL-4). Returns `true` if it was tracked. Touches
+    /// only `last_seen` — never `state` or `last_activity` — so keeping a session
+    /// alive via polling does not reset its Done→Idle neglect timer (SL-3).
+    pub fn touch_seen(&self, session_id: &str, now: Instant) -> bool {
+        let mut sessions = self.sessions.write().expect("session lock poisoned");
+        if let Some(session) = sessions.get_mut(session_id) {
+            session.last_seen = now;
+            true
+        } else {
+            false
+        }
     }
 
     /// Remove a session entirely. Returns `true` if it was present. Unlike
@@ -654,6 +677,26 @@ mod tests {
         let h = m.snapshot().into_iter().find(|x| x.id == "h").unwrap();
         assert!(!h.pending, "hook-tracked session stays confirmed");
         assert_eq!(h.state, SessionState::Working);
+    }
+
+    #[test]
+    fn touch_seen_keeps_polled_session_alive() {
+        // stale_after 100s. A session the poll keeps seeing alive is never evicted.
+        let m = SessionManager::with_timeouts(Duration::from_secs(30), Duration::from_secs(100));
+        let t0 = Instant::now();
+        m.seed_pending("s", None, t0);
+        // Poll touches it just before the stale threshold → liveness refreshed.
+        assert!(m.touch_seen("s", t0 + Duration::from_secs(90)));
+        assert!(
+            m.tick_evict_at(t0 + Duration::from_secs(150)).is_empty(),
+            "a polled-alive session must not be evicted (SL-4)"
+        );
+        // Once polling stops (session died), it evicts ~stale_after after last seen.
+        assert_eq!(
+            m.tick_evict_at(t0 + Duration::from_secs(190)),
+            vec!["s".to_string()]
+        );
+        assert!(!m.touch_seen("absent", t0), "touch on an unknown session is false");
     }
 
     #[test]
