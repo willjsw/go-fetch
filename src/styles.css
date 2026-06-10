@@ -50,6 +50,12 @@ body {
   image-rendering: pixelated;
 }
 
+/* Arms (working only) pivot from the shoulder (top) when flapping (WC-11). */
+.gf-arm {
+  transform-box: fill-box;
+  transform-origin: 50% 0%;
+}
+
 .char {
   flex: 0 0 auto;
   width: 40px;
@@ -79,6 +85,14 @@ body {
     opacity: 0.65;
     animation: gf-sway 3.5s ease-in-out infinite;
   }
+  /* Busy flapping arms while working (WC-11). Arms only exist on the working
+     character (character.js), so this never shows in other states. */
+  .gf-arm-l {
+    animation: gf-flap-l 0.45s ease-in-out infinite;
+  }
+  .gf-arm-r {
+    animation: gf-flap-r 0.45s ease-in-out infinite;
+  }
 }
 
 @keyframes gf-bob {
@@ -101,6 +115,15 @@ body {
 @keyframes gf-sway {
   0%, 100% { transform: rotate(-2deg); }
   50% { transform: rotate(2deg); }
+}
+/* Flap: each arm swings out from the shoulder, mirrored left/right. */
+@keyframes gf-flap-l {
+  0%, 100% { transform: rotate(0deg); }
+  50% { transform: rotate(-24deg); }
+}
+@keyframes gf-flap-r {
+  0%, 100% { transform: rotate(0deg); }
+  50% { transform: rotate(24deg); }
 }
 
 /* ---- Empty state (DI-6) ---- */
