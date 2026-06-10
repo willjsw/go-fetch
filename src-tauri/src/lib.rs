@@ -91,6 +91,21 @@ fn quit_app(app: tauri::AppHandle) {
     app.exit(0);
 }
 
+/// Tauri command: user removes a session from the widget ("Stop monitoring",
+/// GF-106). Dismisses it (so the pre-existing poll won't immediately re-seed an
+/// still-alive session) and reuses the shared notifier to refresh the widget,
+/// clear its notification dedup, and re-apply window prefs.
+#[tauri::command]
+fn dismiss_session(
+    manager: tauri::State<session::SessionManager>,
+    notify: tauri::State<server::UpdateNotifier>,
+    id: String,
+) {
+    manager.dismiss(&id);
+    let notify = notify.inner().clone();
+    notify(&id);
+}
+
 /// Tauri command: enable/disable launch-at-startup (Task 13 / SE-2).
 #[tauri::command]
 fn set_autostart(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
@@ -143,7 +158,8 @@ pub fn run() {
             set_settings,
             get_autostart,
             set_autostart,
-            quit_app
+            quit_app,
+            dismiss_session
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
@@ -177,6 +193,10 @@ pub fn run() {
                 }
                 apply_window_prefs(&n_handle, &n_settings, &n_manager);
             });
+
+            // Expose the notifier to commands (e.g. dismiss_session, GF-106) so a
+            // user action can refresh the widget through the same path as hooks.
+            app.manage(notify.clone());
 
             // Localhost hook receiver (Task 3) → registers hooks once bound (Task 6).
             let s_manager = manager.clone();
