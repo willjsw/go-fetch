@@ -162,7 +162,14 @@ pub fn run() {
                 let mut ticker = tokio::time::interval(IDLE_TICK);
                 loop {
                     ticker.tick().await;
+                    // ST-3: demote quiet `Done` sessions to `Idle`.
                     for id in i_manager.tick_idle() {
+                        (i_notify)(&id);
+                    }
+                    // SL-3: evict sessions stale past the timeout (missed
+                    // SessionEnd safety net). The notifier sees them gone from
+                    // the snapshot and refreshes + clears dedup.
+                    for id in i_manager.tick_evict() {
                         (i_notify)(&id);
                     }
                 }

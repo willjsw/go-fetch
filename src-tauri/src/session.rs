@@ -26,6 +26,15 @@ use crate::server::HookEvent;
 /// considered idle (ST-3). The idle state is widget-side, not a hook event.
 const DEFAULT_IDLE_AFTER: Duration = Duration::from_secs(60);
 
+/// Default time after the **last event of any kind** before a session with no
+/// further signal is evicted entirely (SL-3 safety net). This is the backstop
+/// for a missed `SessionEnd` — Ctrl+C, terminal force-close, SIGKILL, or a crash
+/// where the hook never fires (verified unreliable: PRD Sprint2 §2.1 F3). Set
+/// generously to 1h (D5) so a genuinely-alive-but-quiet session (e.g. a long
+/// permission wait) is never dropped prematurely; PID-based liveness (SL-4)
+/// evicts dead sessions much sooner when the polling layer is available.
+const DEFAULT_STALE_AFTER: Duration = Duration::from_secs(60 * 60);
+
 /// The five monitored session states, ordered by monitoring priority.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -244,6 +253,7 @@ pub enum EventOutcome {
 pub struct SessionManager {
     sessions: Arc<RwLock<HashMap<String, Session>>>,
     idle_after: Duration,
+    stale_after: Duration,
 }
 
 impl Default for SessionManager {
@@ -254,13 +264,18 @@ impl Default for SessionManager {
 
 impl SessionManager {
     pub fn new() -> Self {
-        Self::with_idle_after(DEFAULT_IDLE_AFTER)
+        Self::with_timeouts(DEFAULT_IDLE_AFTER, DEFAULT_STALE_AFTER)
     }
 
     pub fn with_idle_after(idle_after: Duration) -> Self {
+        Self::with_timeouts(idle_after, DEFAULT_STALE_AFTER)
+    }
+
+    pub fn with_timeouts(idle_after: Duration, stale_after: Duration) -> Self {
         SessionManager {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             idle_after,
+            stale_after,
         }
     }
 
@@ -366,6 +381,28 @@ impl SessionManager {
 
     pub fn tick_idle(&self) -> Vec<String> {
         self.tick_idle_at(Instant::now())
+    }
+
+    /// Evict sessions with no event for longer than `stale_after` (SL-3 safety
+    /// net for a missed `SessionEnd`). Returns the evicted ids so the caller can
+    /// refresh the widget and clear notification dedup. Time-based only — this
+    /// is the layer that works with hooks alone; PID-based liveness (SL-4) adds
+    /// faster eviction when the polling layer is present.
+    pub fn tick_evict_at(&self, now: Instant) -> Vec<String> {
+        let mut sessions = self.sessions.write().expect("session lock poisoned");
+        let dead: Vec<String> = sessions
+            .values()
+            .filter(|s| now.saturating_duration_since(s.last_activity) >= self.stale_after)
+            .map(|s| s.id.clone())
+            .collect();
+        for id in &dead {
+            sessions.remove(id);
+        }
+        dead
+    }
+
+    pub fn tick_evict(&self) -> Vec<String> {
+        self.tick_evict_at(Instant::now())
     }
 
     /// Remove a session entirely. Returns `true` if it was present. Unlike
@@ -565,6 +602,37 @@ mod tests {
         let later = t0 + Duration::from_secs(31);
         assert_eq!(m.tick_idle_at(later), vec!["s".to_string()]);
         assert_eq!(m.snapshot()[0].state, SessionState::Idle);
+    }
+
+    #[test]
+    fn stale_session_is_evicted_after_timeout() {
+        // idle_after 30s, stale_after 100s.
+        let m = SessionManager::with_timeouts(Duration::from_secs(30), Duration::from_secs(100));
+        let t0 = Instant::now();
+        m.handle_event_at(&event("s", "PreToolUse"), t0);
+        assert!(m.tick_evict_at(t0).is_empty(), "fresh session is not evicted");
+        // Just before the stale threshold: still alive.
+        assert!(m.tick_evict_at(t0 + Duration::from_secs(99)).is_empty());
+        // Past the stale threshold (no events since): evicted (SL-3).
+        assert_eq!(
+            m.tick_evict_at(t0 + Duration::from_secs(101)),
+            vec!["s".to_string()]
+        );
+        assert!(m.is_empty(), "evicted session is removed entirely");
+    }
+
+    #[test]
+    fn activity_resets_stale_timer() {
+        let m = SessionManager::with_timeouts(Duration::from_secs(30), Duration::from_secs(100));
+        let t0 = Instant::now();
+        m.handle_event_at(&event("s", "PreToolUse"), t0);
+        // A later event refreshes last_activity, so it is not stale yet.
+        m.handle_event_at(&event("s", "PostToolUse"), t0 + Duration::from_secs(90));
+        assert!(
+            m.tick_evict_at(t0 + Duration::from_secs(150)).is_empty(),
+            "recent activity must keep the session alive"
+        );
+        assert_eq!(m.tick_evict_at(t0 + Duration::from_secs(200)), vec!["s".to_string()]);
     }
 
     #[test]
