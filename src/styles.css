@@ -51,10 +51,10 @@ body {
   image-rendering: pixelated;
 }
 
-/* Arms (working only) pivot from the shoulder (top) when flapping (WC-11). */
+/* Arms exist only on the working character; they flap straight up/down,
+   fast and out of phase, like an excited fidget (WC-11). */
 .gf-arm {
   transform-box: fill-box;
-  transform-origin: 50% 0%;
 }
 
 .char {
@@ -89,10 +89,10 @@ body {
   /* Busy flapping arms while working (WC-11). Arms only exist on the working
      character (character.js), so this never shows in other states. */
   .gf-arm-l {
-    animation: gf-flap-l 0.45s ease-in-out infinite;
+    animation: gf-flap-l 0.22s ease-in-out infinite;
   }
   .gf-arm-r {
-    animation: gf-flap-r 0.45s ease-in-out infinite;
+    animation: gf-flap-r 0.22s ease-in-out infinite;
   }
 }
 
@@ -117,14 +117,15 @@ body {
   0%, 100% { transform: rotate(-2deg); }
   50% { transform: rotate(2deg); }
 }
-/* Flap: each arm swings out from the shoulder, mirrored left/right. */
+/* Flap: arms move straight up/down, out of phase (one up while the other is
+   down) for a rapid "파닥파닥" fidget. */
 @keyframes gf-flap-l {
-  0%, 100% { transform: rotate(0deg); }
-  50% { transform: rotate(-24deg); }
+  0%, 100% { transform: translateY(-2px); }
+  50% { transform: translateY(2px); }
 }
 @keyframes gf-flap-r {
-  0%, 100% { transform: rotate(0deg); }
-  50% { transform: rotate(24deg); }
+  0%, 100% { transform: translateY(2px); }
+  50% { transform: translateY(-2px); }
 }
 
 /* ---- Empty state (DI-6) ---- */
