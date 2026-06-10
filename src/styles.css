@@ -256,7 +256,10 @@ body {
 }
 /* …and pause ALL character motion while the window is hidden/minimized. */
 .gf-paused .gf-char,
-.gf-paused .gf-arm,
+.gf-paused .gf-body,
+.gf-paused .gf-paw-l,
+.gf-paused .gf-paw-r,
+.gf-paused .gf-dot,
 .gf-paused .char-wrap {
   animation-play-state: paused !important;
 }
@@ -264,7 +267,10 @@ body {
 /* Hard reduced-motion floor: no ambient/bounce/spawn motion at all. */
 @media (prefers-reduced-motion: reduce) {
   .gf-char,
-  .gf-arm,
+  .gf-body,
+  .gf-paw-l,
+  .gf-paw-r,
+  .gf-dot,
   .anim-node .char-wrap,
   .anim-spawn,
   .anim-despawn {
@@ -280,10 +286,16 @@ body {
   image-rendering: pixelated;
 }
 
-/* Arms exist only on the working character; they flap straight up/down,
-   fast and out of phase, like an excited fidget (WC-11). */
-.gf-arm {
+/* SVG groups/parts transform around their own box (pup bob/spin, paw dig). */
+.gf-body,
+.gf-dot {
   transform-box: fill-box;
+  transform-origin: center;
+}
+.gf-paw-l,
+.gf-paw-r {
+  transform-box: fill-box;
+  transform-origin: center top;
 }
 
 .char {
@@ -297,41 +309,34 @@ body {
   height: 72px;
 }
 
-/* Subtle, ambient per-state motion. */
+/* Per-state motion targets the `.gf-body` group (the pup), so the root's cloud
+   — a sibling group — stays still while only the pup moves (GF-108 #4). */
 @media (prefers-reduced-motion: no-preference) {
-  .gf-char-working {
-    animation: gf-bob 1.3s ease-in-out infinite;
-  }
-  .gf-char-waiting {
-    animation: gf-pulse 1.6s ease-in-out infinite;
-  }
-  .gf-char-error {
-    animation: gf-shake 0.5s ease-in-out infinite;
-  }
-  .gf-char-done {
-    animation: gf-pop 1.8s ease-in-out infinite;
-  }
-  .gf-char-idle {
-    opacity: 0.65;
-    animation: gf-sway 3.5s ease-in-out infinite;
-  }
-  /* Root Fetchy (AM-10): the app symbol drifts gently as if floating on its
-     cloud. Declared after the per-state rules so it wins the `animation`
-     property even when the root also carries a state class (e.g. idle), and
-     keeps full opacity. */
-  .gf-char-root {
-    opacity: 1;
-    animation: gf-float 3.2s ease-in-out infinite;
-  }
-  /* Busy flapping arms while working (WC-11). Arms only exist on the working
-     character (character.js), so this never shows in other states. */
-  .gf-arm-l {
-    animation: gf-flap-l 0.22s ease-in-out infinite;
-  }
-  .gf-arm-r {
-    animation: gf-flap-r 0.22s ease-in-out infinite;
-  }
+  .gf-char-working .gf-body { animation: gf-bob 1.3s ease-in-out infinite; }
+  .gf-char-waiting .gf-body { animation: gf-pulse 1.6s ease-in-out infinite; }
+  .gf-char-error .gf-body { animation: gf-shake 0.5s ease-in-out infinite; }
+  .gf-char-done .gf-body { animation: gf-pop 1.8s ease-in-out infinite; }
+  .gf-char-idle .gf-body { animation: gf-sway 3.5s ease-in-out infinite; }
+  /* pending: spin in place like a pup turning around (GF-108). */
+  .gf-char-pending .gf-body { animation: gf-spin 1.4s linear infinite; }
+  /* root pup bobs gently; its cloud group stays put (GF-108 #4). */
+  .gf-char-root .gf-body { animation: gf-float 3.2s ease-in-out infinite; }
+  /* working: front paws dig the ground, fast + out of phase — same cadence as
+     the old robot arm-flap (0.22s) but pawing the dirt (GF-108). */
+  .gf-char-working .gf-paw-l { animation: gf-dig-l 0.22s ease-in-out infinite; }
+  .gf-char-working .gf-paw-r { animation: gf-dig-r 0.22s ease-in-out infinite; }
+  /* The root pup just bobs gently — it never digs (GF-108 #4). */
+  .gf-char-root .gf-paw-l,
+  .gf-char-root .gf-paw-r { animation: none; }
+  /* scattered dots flutter/drift (도트 흩날림), staggered. */
+  .gf-dot { animation: gf-dot-drift 2.2s ease-in-out infinite; }
+  .gf-dot-2 { animation-delay: 0.4s; }
+  .gf-dot-3 { animation-delay: 0.8s; }
+  .gf-dot-4 { animation-delay: 1.2s; }
 }
+/* idle pup is dimmed; the root stays full opacity. */
+.gf-char-idle { opacity: 0.65; }
+.gf-char-root { opacity: 1; }
 
 @keyframes gf-bob {
   0%, 100% { transform: translateY(0); }
@@ -354,20 +359,30 @@ body {
   0%, 100% { transform: rotate(-2deg); }
   50% { transform: rotate(2deg); }
 }
-/* Root Fetchy floating drift (AM-10). */
+/* Root pup floating drift (AM-10). */
 @keyframes gf-float {
   0%, 100% { transform: translateY(0); }
   50% { transform: translateY(-2px); }
 }
-/* Flap: arms move straight up/down, out of phase (one up while the other is
-   down) for a rapid "파닥파닥" fidget. */
-@keyframes gf-flap-l {
-  0%, 100% { transform: translateY(-2px); }
-  50% { transform: translateY(2px); }
+/* Pending: spin in place (빙글빙글). */
+@keyframes gf-spin {
+  from { transform: rotate(0); }
+  to { transform: rotate(360deg); }
 }
-@keyframes gf-flap-r {
-  0%, 100% { transform: translateY(2px); }
-  50% { transform: translateY(-2px); }
+/* Digging: paws scratch down/back, out of phase (one down while the other is up)
+   for a rapid "땅 파헤치기". */
+@keyframes gf-dig-l {
+  0%, 100% { transform: translateY(0) rotate(0); }
+  50% { transform: translateY(2px) rotate(-14deg); }
+}
+@keyframes gf-dig-r {
+  0%, 100% { transform: translateY(2px) rotate(14deg); }
+  50% { transform: translateY(0) rotate(0); }
+}
+/* Dots drift up and fade, scattering. */
+@keyframes gf-dot-drift {
+  0%, 100% { transform: translateY(0); opacity: 0.85; }
+  50% { transform: translateY(-3px); opacity: 0.35; }
 }
 
 /* The `hidden` attribute must win over the `display:flex` rules below, which it

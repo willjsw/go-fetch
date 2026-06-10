@@ -214,7 +214,10 @@ function layout(stage, forest) {
 
   // Sub-agent (depth-2) size: smaller than its parent, with its own floor.
   const subSize = Math.max(20, Math.min(tierSize("subagent"), Math.round(childSize * 0.7)));
-  const subY = Math.min(h - subSize / 2 - 6, childY + childSize / 2 + subSize / 2 + 18);
+  // Extra vertical gap: the session's title sits below it and the sub-agent's
+  // thought bubble sits above it, so the row needs room for both to avoid the
+  // slight overlap reported (was +18 → +42).
+  const subY = Math.min(h - subSize / 2 - 8, childY + childSize / 2 + subSize / 2 + 42);
 
   visible.forEach((sess, i) => {
     const el = nodeEls.get(sess.id);
