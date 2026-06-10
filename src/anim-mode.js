@@ -173,9 +173,11 @@ function ensureResizeObserver(stage) {
 }
 
 /**
- * Place the root + children and (re)draw the leashes. Children shrink to fit
- * the (narrow) widget and overflow into a "+N" cluster instead of overlapping
- * (AM-9). The character size floor (MIN_CHILD) keeps them readable.
+ * Place the root, its session children, and each session's sub-agents (depth-2,
+ * GF-108), then (re)draw the leashes. Sessions shrink to fit the (narrow) widget
+ * and overflow into a "+N" cluster instead of overlapping (AM-9); the size floor
+ * (MIN_CHILD) keeps them readable. Sub-agents render smaller in a row beneath
+ * their parent session.
  */
 function layout(stage, forest) {
   const w = stage.clientWidth || 360;
@@ -185,16 +187,16 @@ function layout(stage, forest) {
   const rootY = rootSize / 2 + 22;
   positionNode(rootEl, cx, rootY);
 
-  const children = forest.children;
-  const n = children.length;
+  const sessions = forest.children;
+  const n = sessions.length;
   const usable = Math.max(MIN_CHILD, w - PAD * 2);
 
   // How many fit at the readability floor; reserve a slot for "+N" on overflow.
   const maxAtMin = Math.max(1, Math.floor(usable / (MIN_CHILD + GAP)));
-  let visible = children;
+  let visible = sessions;
   let overflowCount = 0;
   if (n > maxAtMin) {
-    visible = children.slice(0, Math.max(1, maxAtMin - 1));
+    visible = sessions.slice(0, Math.max(1, maxAtMin - 1));
     overflowCount = n - visible.length;
   }
 
@@ -205,19 +207,40 @@ function layout(stage, forest) {
       ? Math.max(MIN_CHILD, Math.min(maxChild, Math.floor(usable / slots - GAP)))
       : maxChild;
 
-  const childY = Math.min(h - childSize / 2 - 26, rootY + 130);
+  const childY = Math.min(h - childSize / 2 - 26, rootY + 124);
   const spacing = w / (slots + 1);
-  const fromAnchor = { x: cx, y: rootY + rootSize / 2 };
+  const fromRoot = { x: cx, y: rootY + rootSize / 2 };
   const links = [];
 
-  visible.forEach((child, i) => {
-    const el = nodeEls.get(child.id);
+  // Sub-agent (depth-2) size: smaller than its parent, with its own floor.
+  const subSize = Math.max(20, Math.min(tierSize("subagent"), Math.round(childSize * 0.7)));
+  const subY = Math.min(h - subSize / 2 - 6, childY + childSize / 2 + subSize / 2 + 18);
+
+  visible.forEach((sess, i) => {
+    const el = nodeEls.get(sess.id);
     if (!el) return;
     const x = spacing * (i + 1);
     setNodeSize(el, childSize);
     el.style.setProperty("--bounce-delay", `${(i % 4) * 0.3}s`); // stagger (AM-4)
     positionNode(el, x, childY);
-    links.push({ from: fromAnchor, to: { x, y: childY - childSize / 2 }, session: child.session });
+    links.push({ from: fromRoot, to: { x, y: childY - childSize / 2 }, session: sess.session });
+
+    // Place this session's sub-agents in a centered row beneath it (AM-3 / L2).
+    const subs = sess.children;
+    if (subs.length > 0) {
+      const fromSess = { x, y: childY + childSize / 2 };
+      const step = subSize + 6;
+      const rowW = (subs.length - 1) * step;
+      subs.forEach((sub, j) => {
+        const subEl = nodeEls.get(sub.id);
+        if (!subEl) return;
+        const sx = Math.max(subSize / 2, Math.min(w - subSize / 2, x - rowW / 2 + j * step));
+        setNodeSize(subEl, subSize);
+        subEl.style.setProperty("--bounce-delay", `${(j % 4) * 0.3}s`);
+        positionNode(subEl, sx, subY);
+        links.push({ from: fromSess, to: { x: sx, y: subY - subSize / 2 }, session: sub.session });
+      });
+    }
   });
 
   if (overflowCount > 0) {
@@ -228,7 +251,7 @@ function layout(stage, forest) {
     setNodeSize(ov, childSize);
     const x = spacing * slots;
     positionNode(ov, x, childY);
-    links.push({ from: fromAnchor, to: { x, y: childY - childSize / 2 }, session: null });
+    links.push({ from: fromRoot, to: { x, y: childY - childSize / 2 }, session: null });
   } else if (overflowEl) {
     overflowEl.hidden = true;
   }

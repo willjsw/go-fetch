@@ -129,10 +129,13 @@ function renderActiveMode() {
     }
   } else {
     if (stage) stage.hidden = true;
-    const hasSessions = currentSessions.length > 0;
+    // Cards mode shows top-level sessions only; sub-agents (Layer 2) are nested
+    // visually in the animated mode, not listed as separate cards.
+    const topLevel = currentSessions.filter((s) => !s.parent_session_id);
+    const hasSessions = topLevel.length > 0;
     empty.hidden = hasSessions;
     list.hidden = !hasSessions;
-    renderCardsMode(list, currentSessions, showDetail);
+    renderCardsMode(list, topLevel, showDetail);
   }
 
   updateMotionState();

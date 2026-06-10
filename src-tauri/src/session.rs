@@ -110,6 +110,15 @@ pub struct Session {
     /// real hook event clears it. The five-state engine is unchanged: `pending`
     /// is a display-layer flag layered on a non-notifiable underlying state.
     pub pending: bool,
+    /// Layer 2 (GF-108): for a sub-agent node, the `session_id` of its parent
+    /// session. Sub-agents share the parent's `session_id`, so they are tracked
+    /// in a separate map and carry this link for the widget to nest them.
+    /// `None` for a top-level session.
+    #[serde(default)]
+    pub parent_session_id: Option<String>,
+    /// Layer 2: the sub-agent's `agent_id` (present only for sub-agent nodes).
+    #[serde(default)]
+    pub agent_id: Option<String>,
     /// Instant of the last hook event for this session — drives the Done→Idle
     /// neglect timer (ST-3) and `idle_seconds`. Not serialized.
     #[serde(skip)]
@@ -140,6 +149,8 @@ impl Session {
             idle_seconds: 0,
             summary: String::new(),
             pending: false,
+            parent_session_id: None,
+            agent_id: None,
             last_activity: now,
             last_seen: now,
         }
@@ -229,6 +240,13 @@ pub fn project_name_from_cwd(cwd: &str) -> String {
         .unwrap_or_else(|| cwd.to_string())
 }
 
+/// Composite id for a sub-agent node (Layer 2 / GF-108). Sub-agents share their
+/// parent's `session_id`, so the display id combines it with the `agent_id`.
+/// The separator is unlikely to appear in either id.
+pub fn subagent_id(session_id: &str, agent_id: &str) -> String {
+    format!("{session_id}\u{1}agent\u{1}{agent_id}")
+}
+
 /// Map a hook event to the state it implies, or `None` if the event does not
 /// affect the monitored state (e.g. `auth_success`, unknown events).
 fn map_event_to_state(event: &HookEvent) -> Option<SessionState> {
@@ -275,6 +293,11 @@ pub enum EventOutcome {
 #[derive(Clone)]
 pub struct SessionManager {
     sessions: Arc<RwLock<HashMap<String, Session>>>,
+    /// Layer 2 (GF-108): sub-agent nodes, keyed by `subagent_id(session_id,
+    /// agent_id)`. Kept **separate** from `sessions` so the verified five-state
+    /// engine, notifications, sorting, and eviction for top-level sessions stay
+    /// exactly as they were — sub-agents are display-only and never notify.
+    subagents: Arc<RwLock<HashMap<String, Session>>>,
     /// Sessions the user explicitly dismissed (Stop monitoring). The
     /// pre-existing poll won't re-seed these, so a manually-removed session
     /// stays gone even while its process is still alive — until a real hook
@@ -308,6 +331,7 @@ impl SessionManager {
     pub fn with_timeouts(idle_after: Duration, stale_after: Duration) -> Self {
         SessionManager {
             sessions: Arc::new(RwLock::new(HashMap::new())),
+            subagents: Arc::new(RwLock::new(HashMap::new())),
             dismissed: Arc::new(RwLock::new(HashSet::new())),
             dismissed_path: None,
             idle_after,
@@ -371,6 +395,16 @@ impl SessionManager {
             self.save_dismissed();
         }
 
+        // Layer 2 (GF-108): an event carrying `agent_id` comes from a sub-agent.
+        // Route it to the separate sub-agent map so it never overwrites the
+        // parent session (which shares the same `session_id`) and never fires a
+        // notification. This activates only when the payload actually includes
+        // `agent_id` (runtime-verified via the GF-114 probe) — otherwise nothing
+        // here runs and behavior is identical to Layer 1.
+        if event.agent_id.is_some() {
+            return self.handle_subagent_event_at(event, now);
+        }
+
         match event.hook_event_name.as_str() {
             "SessionStart" => {
                 let mut sessions = self.sessions.write().expect("session lock poisoned");
@@ -400,6 +434,8 @@ impl SessionManager {
                     .expect("session lock poisoned")
                     .remove(&event.session_id)
                     .is_some();
+                // Layer 2: a parent ending takes its sub-agents with it.
+                self.remove_subagents_of(&event.session_id);
                 return if removed {
                     EventOutcome::Removed
                 } else {
@@ -451,6 +487,78 @@ impl SessionManager {
         self.handle_event_at(event, Instant::now())
     }
 
+    /// Layer 2 (GF-108): ingest a sub-agent event into the separate sub-agent
+    /// map. Sub-agents are **display-only** — shown as `Working` while active and
+    /// removed on `SubagentStop` (or stale eviction). They never touch the parent
+    /// session's state and never notify. The returned id-to-notify is the
+    /// composite sub-agent id so the notifier resolves to this (non-notifiable)
+    /// node, never the parent.
+    fn handle_subagent_event_at(&self, event: &HookEvent, now: Instant) -> EventOutcome {
+        let Some(agent_id) = event.agent_id.as_deref() else {
+            return EventOutcome::Ignored;
+        };
+        let parent_id = event.session_id.clone();
+        let key = subagent_id(&parent_id, agent_id);
+
+        // Keep the parent alive while a child works (without resetting its
+        // neglect timer) — a busy sub-agent implies the session is still running.
+        if let Some(parent) = self
+            .sessions
+            .write()
+            .expect("session lock poisoned")
+            .get_mut(&parent_id)
+        {
+            parent.last_seen = now;
+        }
+
+        // SubagentStop ends the child node.
+        if event.hook_event_name == "SubagentStop" {
+            let removed = self
+                .subagents
+                .write()
+                .expect("subagent lock poisoned")
+                .remove(&key)
+                .is_some();
+            return if removed {
+                EventOutcome::Removed
+            } else {
+                EventOutcome::Ignored
+            };
+        }
+
+        // SubagentStart, or a tool event fired inside the sub-agent → show/update
+        // the child as Working.
+        let mut subs = self.subagents.write().expect("subagent lock poisoned");
+        let sub = subs
+            .entry(key.clone())
+            .or_insert_with(|| Session::new(&key, event.cwd.clone(), now));
+        sub.last_activity = now;
+        sub.last_seen = now;
+        sub.pending = false;
+        sub.parent_session_id = Some(parent_id);
+        sub.agent_id = Some(agent_id.to_string());
+        // Label the node by its agent type (e.g. "Explore"), else "subagent".
+        sub.project_name = event
+            .agent_type
+            .clone()
+            .filter(|t| !t.is_empty())
+            .unwrap_or_else(|| "subagent".to_string());
+        if event.tool_name.is_some() {
+            sub.last_tool = event.tool_name.clone();
+            sub.last_tool_input = event.tool_input.clone();
+        }
+        sub.state = SessionState::Working;
+        EventOutcome::Changed(SessionState::Working)
+    }
+
+    /// Remove all sub-agent nodes belonging to `parent_id` (Layer 2 cleanup).
+    fn remove_subagents_of(&self, parent_id: &str) {
+        self.subagents
+            .write()
+            .expect("subagent lock poisoned")
+            .retain(|_, s| s.parent_session_id.as_deref() != Some(parent_id));
+    }
+
     /// Transition any `Done` session that has been quiet for longer than
     /// `idle_after` into `Idle`. Returns the ids that changed. Intended to be
     /// called periodically by a timer (ST-3).
@@ -477,15 +585,44 @@ impl SessionManager {
     /// is the layer that works with hooks alone; PID-based liveness (SL-4) adds
     /// faster eviction when the polling layer is present.
     pub fn tick_evict_at(&self, now: Instant) -> Vec<String> {
-        let mut sessions = self.sessions.write().expect("session lock poisoned");
-        let dead: Vec<String> = sessions
+        let mut dead: Vec<String> = {
+            let mut sessions = self.sessions.write().expect("session lock poisoned");
+            let dead: Vec<String> = sessions
+                .values()
+                .filter(|s| now.saturating_duration_since(s.last_seen) >= self.stale_after)
+                .map(|s| s.id.clone())
+                .collect();
+            for id in &dead {
+                sessions.remove(id);
+            }
+            dead
+        };
+        // Layer 2: evict stale sub-agents and orphans whose parent is now gone,
+        // so a missed SubagentStop (or a parent eviction) can't leave a dangling
+        // child node behind.
+        let alive_parents: HashSet<String> = self
+            .sessions
+            .read()
+            .expect("session lock poisoned")
+            .keys()
+            .cloned()
+            .collect();
+        let mut subs = self.subagents.write().expect("subagent lock poisoned");
+        let dead_subs: Vec<String> = subs
             .values()
-            .filter(|s| now.saturating_duration_since(s.last_seen) >= self.stale_after)
+            .filter(|s| {
+                now.saturating_duration_since(s.last_seen) >= self.stale_after
+                    || s.parent_session_id
+                        .as_deref()
+                        .map(|p| !alive_parents.contains(p))
+                        .unwrap_or(true)
+            })
             .map(|s| s.id.clone())
             .collect();
-        for id in &dead {
-            sessions.remove(id);
+        for id in &dead_subs {
+            subs.remove(id);
         }
+        dead.extend(dead_subs);
         dead
     }
 
@@ -555,6 +692,7 @@ impl SessionManager {
             .expect("dismissed lock poisoned")
             .insert(session_id.to_string());
         self.save_dismissed(); // remember across restart (GF-107)
+        self.remove_subagents_of(session_id); // Layer 2: drop its children too
         self.remove(session_id)
     }
 
@@ -583,16 +721,17 @@ impl SessionManager {
     /// name, with `idle_seconds` filled in. Used by the widget UI (Task 5).
     pub fn snapshot(&self) -> Vec<Session> {
         let now = Instant::now();
+        let fill = |mut s: Session| {
+            s.idle_seconds = now.saturating_duration_since(s.last_activity).as_secs();
+            s.summary = s.generate_summary();
+            s
+        };
         let sessions = self.sessions.read().expect("session lock poisoned");
-        let mut out: Vec<Session> = sessions
-            .values()
-            .cloned()
-            .map(|mut s| {
-                s.idle_seconds = now.saturating_duration_since(s.last_activity).as_secs();
-                s.summary = s.generate_summary();
-                s
-            })
-            .collect();
+        let mut out: Vec<Session> = sessions.values().cloned().map(fill).collect();
+        // Layer 2: include sub-agent nodes (display-only); the widget nests them
+        // under their parent via `parent_session_id`. Cards mode filters them out.
+        let subs = self.subagents.read().expect("subagent lock poisoned");
+        out.extend(subs.values().cloned().map(fill));
         out.sort_by(|a, b| {
             a.state
                 .priority()
@@ -623,6 +762,12 @@ impl SessionManager {
             .expect("session lock poisoned")
             .values()
             .any(|s| s.state != SessionState::Idle || s.pending)
+            // Layer 2: an active sub-agent keeps the widget shown too.
+            || !self
+                .subagents
+                .read()
+                .expect("subagent lock poisoned")
+                .is_empty()
     }
 }
 
@@ -744,6 +889,80 @@ mod tests {
         assert_eq!(m.handle_event(&event("s", "FileChanged")), EventOutcome::Ignored);
         assert_eq!(m.handle_event(&event("s", "CwdChanged")), EventOutcome::Ignored);
         assert!(m.is_empty(), "ignored events must not create sessions");
+    }
+
+    /// Layer 2 (GF-108): an event carrying `agent_id` becomes a separate
+    /// sub-agent node and must NOT overwrite the parent session (they share a
+    /// `session_id`). The node links back via `parent_session_id`.
+    #[test]
+    fn subagent_events_route_to_separate_nodes() {
+        let m = SessionManager::new();
+        // Parent session is Working on Bash.
+        m.handle_event(&event_json(serde_json::json!({
+            "session_id": "parent", "hook_event_name": "PreToolUse",
+            "tool_name": "Bash", "tool_input": {"command": "ls"}, "cwd": "/x/proj"
+        })));
+        // A sub-agent tool event: same session_id, carries agent_id + agent_type.
+        let out = m.handle_event(&event_json(serde_json::json!({
+            "session_id": "parent", "hook_event_name": "PreToolUse",
+            "tool_name": "Read", "tool_input": {"file_path": "a.rs"},
+            "agent_id": "a1", "agent_type": "Explore"
+        })));
+        assert_eq!(out, EventOutcome::Changed(SessionState::Working));
+
+        let snap = m.snapshot();
+        let parent = snap.iter().find(|s| s.id == "parent").expect("parent present");
+        assert_eq!(
+            parent.last_tool.as_deref(),
+            Some("Bash"),
+            "parent must NOT be overwritten by the sub-agent's tool"
+        );
+        assert!(parent.parent_session_id.is_none());
+
+        let sub = snap
+            .iter()
+            .find(|s| s.parent_session_id.as_deref() == Some("parent"))
+            .expect("a separate sub-agent node exists");
+        assert_eq!(sub.agent_id.as_deref(), Some("a1"));
+        assert_eq!(sub.project_name, "Explore");
+        assert_eq!(sub.state, SessionState::Working);
+        assert_eq!(sub.summary, "reading a.rs");
+        assert_eq!(m.len(), 1, "len() counts only top-level sessions");
+    }
+
+    /// SubagentStop removes only its node; SessionEnd of the parent clears all
+    /// of its remaining sub-agents (Layer 2 cleanup).
+    #[test]
+    fn subagent_stop_and_parent_end_clear_children() {
+        let m = SessionManager::new();
+        let subcount = |m: &SessionManager| {
+            m.snapshot().iter().filter(|s| s.parent_session_id.is_some()).count()
+        };
+        m.handle_event(&event_json(serde_json::json!({
+            "session_id": "p", "hook_event_name": "PreToolUse",
+            "tool_name": "Bash", "agent_id": "a1", "agent_type": "Explore"
+        })));
+        m.handle_event(&event_json(serde_json::json!({
+            "session_id": "p", "hook_event_name": "PreToolUse",
+            "tool_name": "Edit", "agent_id": "a2", "agent_type": "Plan"
+        })));
+        assert_eq!(subcount(&m), 2);
+
+        // SubagentStop for a1 drops only that child.
+        let out = m.handle_event(&event_json(serde_json::json!({
+            "session_id": "p", "hook_event_name": "SubagentStop", "agent_id": "a1"
+        })));
+        assert_eq!(out, EventOutcome::Removed);
+        assert_eq!(subcount(&m), 1);
+
+        // Create the top-level parent, then end it — its remaining child clears.
+        m.handle_event(&event_json(serde_json::json!({
+            "session_id": "p", "hook_event_name": "PreToolUse", "tool_name": "Bash"
+        })));
+        m.handle_event(&event_json(serde_json::json!({
+            "session_id": "p", "hook_event_name": "SessionEnd", "reason": "clear"
+        })));
+        assert_eq!(subcount(&m), 0, "SessionEnd clears the parent's sub-agents");
     }
 
     #[test]
