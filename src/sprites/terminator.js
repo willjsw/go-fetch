@@ -1,275 +1,203 @@
-// Terminator — dark-metal endoskeleton sprite sheet (GF-118).
+// Terminator — Arnold on a motorcycle (GF-118; 32×26 detail pass).
 //
-// Front-facing humanoid in gunmetal armor with the iconic single red eye (the
-// eye stays red regardless of session state — identity over indication; the
-// state color rides on the leash/cards as usual).
+// Side view facing right: slick hair, sunglasses, leather jacket, one hand on
+// the bar of a low cruiser — and a pump shotgun for when there is WORK to do.
+// He never walks; he rides, so the move anims are the bike rolling.
 //
-// State motions: hammer(주먹 내리치기+스파크) / sweep(붉은 눈 스캔) /
-// flare(눈 광폭+스파크) / thumbsup(엄지 들기) / shutdown(고개 숙임·소등) /
-// scan(느린 스윕).
+// State motions: shotgun(한손 샷건 — 조준→발사→연기→펌프, 4f) / scan(고개
+// 좌우, 4f) / backfire(역화 스파크+빨간 글린트, 3f) / thumbsup(엄지 — 그 장면,
+// 3f) / park(시동 끄고 꾸벅, 3f) / scanSlow(pending).
 
 const PALETTE = {
-  M: "#8f99a4", // armor
-  D: "#4f5862", // dark armor / joints
-  R: "#e8362e", // the red eye
-  Y: "#f5d04c", // impact sparks
+  H: "#3a322c", // hair
+  F: "#d9a47e", // skin
+  J: "#2b2e35", // leather jacket
+  N: "#14181c", // sunglasses / tires / shotgun / boots
+  M: "#8f99a4", // tank / engine / hubs / headlight
+  D: "#4f5862", // fork / exhaust / bar / stock
+  R: "#e8362e", // taillight / angry lens glint
+  Y: "#f5d04c", // muzzle flash / backfire sparks
+  K: "#5b646e", // smoke
+  z: "#9ca3af", // parked-doze Zz
 };
 
-const STAND = [
-  "................",
-  ".....MMMMM......",
-  ".....MMMMM......",
-  ".....MRRMM......",
-  ".....MMMMM......",
-  "......DDD.......",
-  "...MMMMMMMMM....",
-  "..DMMMMMMMMMD...",
-  "..D.MMMMMMM.D...",
-  "..D.MMMMMMM.D...",
-  "....DD...DD.....",
-  "....DD...DD.....",
-  "...DDD...DDD....",
+const E = "................................";
+const edit = (g, edits) => g.map((row, y) => edits[y] ?? row);
+const shiftRight = (g) => g.map((row) => "." + row.slice(0, 31));
+
+// Arnold + bike at rest, hand on the bar.
+const BASE = [
+  "................................",
+  "...........HHHH.................",
+  "...........HHHHH................",
+  "...........FFFFH................",
+  "...........NNNNN................",
+  "...........FFFF.................",
+  "............FF..................",
+  "...........JJJJ.................",
+  "..........JJJJJJ................",
+  "..........JJJJJ.JJ..............",
+  "..........JJJJJ...JJ............",
+  "..........JJJJJ.....FF..........",
+  "........NNJJJJJJ.....DD.........",
+  "...R....MMMMJJJJJJ...DD.........",
+  ".....MMMMMMMMM..JJ...DD..MM.....",
+  "..DDDDDDMMMMMMMM.JJ..DD.MM......",
+  "..DDDDDD.MMMMMM..JJ..DD.........",
+  ".....NNNN.......NNNN..NNNN......",
+  "....NNNNNN...........NNNNNN.....",
+  "...NNNNNNNN.........NNNNNNNN....",
+  "...NNNMMNNN.........NNNMMNNN....",
+  "...NNNNNNNN.........NNNNNNNN....",
+  "....NNNNNN...........NNNNNN.....",
+  ".....NNNN.............NNNN......",
+  "................................",
+  "................................",
 ];
 
-// Eye dimmed — the idle pulse pair.
-const STAND_DIM = [
-  "................",
-  ".....MMMMM......",
-  ".....MMMMM......",
-  ".....MDRMM......",
-  ".....MMMMM......",
-  "......DDD.......",
-  "...MMMMMMMMM....",
-  "..DMMMMMMMMMD...",
-  "..D.MMMMMMM.D...",
-  "..D.MMMMMMM.D...",
-  "....DD...DD.....",
-  "....DD...DD.....",
-  "...DDD...DDD....",
-];
+// Rolling: the hubs swing and the pipe breathes a puff.
+const RIDE_B = edit(BASE, {
+  15: "K.DDDDDDMMMMMMMM.JJ..DD.MM......",
+  19: "...NNNNMNNN.........NNNNMNNN....",
+  20: "...NNNM.NNN.........NNNM.NNN....",
+  21: "...NNNNMNNN.........NNNNMNNN....",
+});
+const RIDE_C = edit(BASE, {
+  8: "..........JJJJJJJ...............",
+  15: ".KDDDDDDMMMMMMMM.JJ..DD.MM......",
+  20: "...NNMM.NNN.........NNMM.NNN....",
+});
 
-// Heavy stomp: legs split wide, then gather with the frame dropped a pixel.
-const STOMP_A = [
-  "................",
-  ".....MMMMM......",
-  ".....MMMMM......",
-  ".....MRRMM......",
-  ".....MMMMM......",
-  "......DDD.......",
-  "...MMMMMMMMM....",
-  "..DMMMMMMMMMD...",
-  "..D.MMMMMMM.D...",
-  "..D.MMMMMMM.D...",
-  "...DD.....DD....",
-  "...DD.....DD....",
-  "..DDD.....DDD...",
-];
+// Working: the shotgun comes up — aim, FIRE (muzzle flash), smoke, pump.
+const GUN_AIM = edit(BASE, {
+  8: "..........JJJJJJ.NNNNNNNN.......",
+  9: "..........JJJJJ.DDFF............",
+  10: "..........JJJJJ.................",
+  11: "..........JJJJJ.................",
+});
+const GUN_FIRE = edit(BASE, {
+  7: "...........JJJJ..........Y.Y....",
+  8: "..........JJJJJJ.NNNNNNNNYYY....",
+  9: "..........JJJJJ.DDFF.....Y.Y....",
+  10: "..........JJJJJ.................",
+  11: "..........JJJJJ.................",
+});
+const GUN_SMOKE = edit(BASE, {
+  6: "............FF...........K......",
+  7: "...........JJJJ.........KK......",
+  8: "..........JJJJJJ.NNNNNNNN.......",
+  9: "..........JJJJJ.DDFF............",
+  10: "..........JJJJJ.................",
+  11: "..........JJJJJ.................",
+});
+const GUN_PUMP = edit(BASE, {
+  8: "..........JJJJJJ................",
+  9: "..........JJJJJ.DDNNNNNNNN......",
+  10: "..........JJJJJ...FF............",
+  11: "..........JJJJJ.................",
+});
 
-const STOMP_B = [
-  "................",
-  "................",
-  ".....MMMMM......",
-  ".....MMMMM......",
-  ".....MRRMM......",
-  ".....MMMMM......",
-  "......DDD.......",
-  "...MMMMMMMMM....",
-  "..DMMMMMMMMMD...",
-  "..D.MMMMMMM.D...",
-  ".....DD.DD......",
-  ".....DD.DD......",
-  "....DDD.DDD.....",
-];
+// Scan: the head turns back, then forward.
+const SCAN_L = edit(BASE, {
+  1: "..........HHHH..................",
+  2: "..........HHHHH.................",
+  3: "..........HFFFF.................",
+  4: "..........NNNNN.................",
+  5: "..........FFFF..................",
+});
+const SCAN_R = edit(BASE, {
+  1: "............HHHH................",
+  2: "............HHHHH...............",
+  3: "............FFFFH...............",
+  4: "............NNNNN...............",
+  5: "............FFFF................",
+});
 
-// Hammer: right fist raised overhead, then slammed down with sparks.
-const HAMMER_UP = [
-  "...........MM...",
-  ".....MMMMM.MM...",
-  ".....MMMMM.D....",
-  ".....MRRMM.D....",
-  ".....MMMMM.D....",
-  "......DDD.D.....",
-  "...MMMMMMMMM....",
-  "..DMMMMMMMM.....",
-  "..D.MMMMMMM.....",
-  "..D.MMMMMMM.....",
-  "....DD...DD.....",
-  "....DD...DD.....",
-  "...DDD...DDD....",
-];
+// Backfire: sparks and smoke burst off the pipe, lenses glint red, the bike
+// jolts a pixel.
+const FIRE_A = edit(BASE, {
+  4: "...........NRNRN................",
+  14: ".Y...MMMMMMMMM..JJ...DD..MM.....",
+  15: "Y.DDDDDDMMMMMMMM.JJ..DD.MM......",
+  16: ".YDDDDDD.MMMMMM..JJ..DD.........",
+});
+const FIRE_B = edit(shiftRight(BASE), {
+  4: "............NRNRN...............",
+  15: ".K.DDDDDDMMMMMMMM.JJ..DD.MM.....",
+  16: "Y..DDDDDD.MMMMMM..JJ..DD........",
+});
+const FIRE_C = edit(BASE, {
+  4: "...........NRNRN................",
+  13: ".KKR....MMMMJJJJJJ...DD.........",
+  15: ".YDDDDDDMMMMMMMM.JJ..DD.MM......",
+});
 
-const HAMMER_DOWN = [
-  "................",
-  ".....MMMMM......",
-  ".....MMMMM......",
-  ".....MRRMM......",
-  ".....MMMMM......",
-  "......DDD.......",
-  "...MMMMMMMMM....",
-  "..DMMMMMMMMD....",
-  "..D.MMMMMMMD....",
-  "..D.MMMMMMMMM...",
-  "....DD...DD.MM..",
-  "....DD...DD.Y...",
-  "...DDD...DDDY.Y.",
-];
+// Thumbs-up from the saddle — pumping once. You know the scene.
+const THUMB_A = edit(BASE, {
+  3: "...........FFFFH.F..............",
+  4: "...........NNNNN.FF.............",
+  5: "...........FFFF...JJ............",
+  6: "............FF....JJ............",
+  7: "...........JJJJ...JJ............",
+  8: "..........JJJJJJJJJ.............",
+  9: "..........JJJJJ.................",
+  10: "..........JJJJJ.................",
+  11: "..........JJJJJ.................",
+});
+const THUMB_B = edit(BASE, {
+  2: "...........HHHHH.F..............",
+  3: "...........FFFFH.FF.............",
+  4: "...........NNNNN..JJ............",
+  5: "...........FFFF...JJ............",
+  6: "............FF....JJ............",
+  7: "...........JJJJ...JJ............",
+  8: "..........JJJJJJJJJ.............",
+  9: "..........JJJJJ.................",
+  10: "..........JJJJJ.................",
+  11: "..........JJJJJ.................",
+});
 
-// Sweep: the red eye tracks across the skull plate.
-const SWEEP_L = [
-  "................",
-  ".....MMMMM......",
-  ".....MMMMM......",
-  ".....RRMMM......",
-  ".....MMMMM......",
-  "......DDD.......",
-  "...MMMMMMMMM....",
-  "..DMMMMMMMMMD...",
-  "..D.MMMMMMM.D...",
-  "..D.MMMMMMM.D...",
-  "....DD...DD.....",
-  "....DD...DD.....",
-  "...DDD...DDD....",
-];
+// Parked: head bowed, engine off, Zz drifting.
+const PARK_A = edit(BASE, {
+  0: "....................z...........",
+  1: "...........HHHH....zz...........",
+  2: "...........HHHHH................",
+});
+const PARK_B = edit(BASE, {
+  0: ".....................zz.........",
+  1: "...........HHHH.....z...........",
+  2: "...........HHHHH................",
+});
+const PARK_C = edit(BASE, {
+  1: "...........HHHH.................",
+  2: "...........HHHHH....z...........",
+  3: "...........FFFFH...zz...........",
+});
 
-const SWEEP_R = [
-  "................",
-  ".....MMMMM......",
-  ".....MMMMM......",
-  ".....MMRRM......",
-  ".....MMMMM......",
-  "......DDD.......",
-  "...MMMMMMMMM....",
-  "..DMMMMMMMMMD...",
-  "..D.MMMMMMM.D...",
-  "..D.MMMMMMM.D...",
-  "....DD...DD.....",
-  "....DD...DD.....",
-  "...DDD...DDD....",
-];
-
-// Flare: the eye blooms wide and sparks jump off the chassis.
-const FLARE_A = [
-  "..Y.............",
-  ".....MMMMM......",
-  ".....MMMMM..Y...",
-  "....RRRRMM......",
-  ".....MMMMM......",
-  "......DDD.......",
-  "...MMMMMMMMM....",
-  "..DMMMMMMMMMD...",
-  "..D.MMMMMMM.D...",
-  "..D.MMMMMMM.D...",
-  "....DD...DD.....",
-  "....DD...DD.....",
-  "...DDD...DDD....",
-];
-
-const FLARE_B = [
-  "............Y...",
-  ".Y...MMMMM......",
-  ".....MMMMM......",
-  "....RRRRRM......",
-  ".....MMMMM......",
-  "......DDD.......",
-  "...MMMMMMMMM....",
-  "..DMMMMMMMMMD...",
-  "..D.MMMMMMM.D...",
-  "..D.MMMMMMM.D...",
-  "....DD...DD.....",
-  "....DD...DD.....",
-  "...DDD...DDD....",
-];
-
-// Thumbs-up: the arm rises with the thumb out — you know the scene.
-const THUMB_A = [
-  "...........DM...",
-  ".....MMMMM..M...",
-  ".....MMMMM..M...",
-  ".....MRRMM..M...",
-  ".....MMMMM..D...",
-  "......DDD..D....",
-  "...MMMMMMMMM....",
-  "..DMMMMMMMM.....",
-  "..D.MMMMMMM.....",
-  "..D.MMMMMMM.....",
-  "....DD...DD.....",
-  "....DD...DD.....",
-  "...DDD...DDD....",
-];
-
-const THUMB_B = [
-  "................",
-  ".....MMMMM..DM..",
-  ".....MMMMM...M..",
-  ".....MRRMM...M..",
-  ".....MMMMM..D...",
-  "......DDD..D....",
-  "...MMMMMMMMM....",
-  "..DMMMMMMMM.....",
-  "..D.MMMMMMM.....",
-  "..D.MMMMMMM.....",
-  "....DD...DD.....",
-  "....DD...DD.....",
-  "...DDD...DDD....",
-];
-
-// Shutdown: head bowed, eye off.
-const SHUT_A = [
-  "................",
-  "................",
-  ".....MMMMM......",
-  ".....MMMMM......",
-  ".....MDDMM......",
-  ".....MMMMM......",
-  "...MMMDDDMMM....",
-  "..DMMMMMMMMMD...",
-  "..D.MMMMMMM.D...",
-  "..D.MMMMMMM.D...",
-  "....DD...DD.....",
-  "....DD...DD.....",
-  "...DDD...DDD....",
-];
-
-const SHUT_B = [
-  "................",
-  "................",
-  ".....MMMMM......",
-  ".....MMMMM......",
-  ".....MDRMM......",
-  ".....MMMMM......",
-  "...MMMDDDMMM....",
-  "..DMMMMMMMMMD...",
-  "..D.MMMMMMM.D...",
-  "..D.MMMMMMM.D...",
-  "....DD...DD.....",
-  "....DD...DD.....",
-  "...DDD...DDD....",
-];
-
-const WALK = { fps: 4, frames: [STOMP_A, STOMP_B] };
+const RIDE = { fps: 8, frames: [BASE, RIDE_B, BASE, RIDE_C] };
 
 export default {
   name: "terminator",
-  size: [16, 13],
+  size: [32, 26],
   palette: PALETTE,
   anims: {
-    idle: { fps: 1.5, frames: [STAND, STAND_DIM] },
-    walk: WALK,
-    walkFront: WALK,
-    walkBack: WALK,
-    hammer: { fps: 6, frames: [HAMMER_UP, HAMMER_DOWN] },
-    sweep: { fps: 3, frames: [SWEEP_L, STAND, SWEEP_R, STAND] },
-    flare: { fps: 7, frames: [FLARE_A, FLARE_B] },
-    thumbsup: { fps: 3, frames: [THUMB_A, THUMB_B] },
-    shutdown: { fps: 1, frames: [SHUT_A, SHUT_B] },
-    scan: { fps: 1.5, frames: [SWEEP_L, STAND, SWEEP_R, STAND] },
+    idle: { fps: 2, frames: [BASE, RIDE_B] },
+    walk: RIDE,
+    walkFront: RIDE,
+    walkBack: RIDE,
+    shotgun: { fps: 8, frames: [GUN_AIM, GUN_FIRE, GUN_SMOKE, GUN_PUMP] },
+    scan: { fps: 3, frames: [SCAN_L, BASE, SCAN_R, BASE] },
+    backfire: { fps: 8, frames: [FIRE_A, FIRE_B, FIRE_C] },
+    thumbsup: { fps: 3, frames: [THUMB_A, THUMB_B, THUMB_A] },
+    park: { fps: 1.5, frames: [PARK_A, PARK_B, PARK_C] },
+    scanSlow: { fps: 1.5, frames: [SCAN_L, BASE, SCAN_R, BASE] },
   },
   stateAnims: {
-    working: "hammer",
-    waiting: "sweep",
-    error: "flare",
+    working: "shotgun",
+    waiting: "scan",
+    error: "backfire",
     done: "thumbsup",
-    idle: "shutdown",
-    pending: "scan",
+    idle: "park",
+    pending: "scanSlow",
   },
 };

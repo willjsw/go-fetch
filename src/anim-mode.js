@@ -179,7 +179,7 @@ function setEntityState(ent, state) {
   if (ent.state === key) return;
   ent.state = key;
   ent.el.dataset.state = key;
-  const b = BEHAVIOR[key] || BEHAVIOR.idle;
+  const b = behaviorOf(ent);
   if (!b.roam && ent.mode !== "held") {
     // Attention states (waiting/error/done) pin immediately: stop mid-stroll
     // and act the new motion where the dog stands.
@@ -196,10 +196,18 @@ function setEntityState(ent, state) {
 /** Choose the sprite animation for the entity's current mode + state. */
 function applyAnim(ent) {
   const color = STATE_COLOR[ent.state];
+  const sheet = activeSheet();
   if (ent.mode === "stroll") {
     const du = ent.tu - ent.u;
     const dv = ent.tv - ent.v;
-    if (Math.abs(dv) > Math.abs(du) * 1.6) {
+    // A sheet may override how a state MOVES (e.g. the robot flies as a UFO
+    // while working) — otherwise pick a directional walk.
+    const override = sheet.moveAnims && sheet.moveAnims[ent.state];
+    if (override) {
+      ent.sprite.setAnim(override, color);
+      ent.facing = du < 0;
+      ent.sprite.setFlip(ent.facing);
+    } else if (Math.abs(dv) > Math.abs(du) * 1.6) {
       ent.sprite.setAnim(dv > 0 ? "walkFront" : "walkBack", color);
       ent.sprite.setFlip(false);
     } else {
@@ -208,7 +216,7 @@ function applyAnim(ent) {
       ent.sprite.setFlip(ent.facing);
     }
   } else {
-    ent.sprite.setAnim(activeSheet().stateAnims[ent.state] || "idle", color);
+    ent.sprite.setAnim(sheet.stateAnims[ent.state] || "idle", color);
     ent.sprite.setFlip(ent.facing);
   }
 }
@@ -239,10 +247,19 @@ function leashOf(ent) {
   return ent.role === "subagent" ? LEASH_SUB : LEASH_SESSION;
 }
 
+/** Stroll personality for an entity — the sheet may override per state (the
+ *  robot-UFO zips around while working; a dog digs mostly in place). */
+function behaviorOf(ent) {
+  const base = BEHAVIOR[ent.state] || BEHAVIOR.idle;
+  const sheet = activeSheet();
+  const override = sheet.behavior && sheet.behavior[ent.state];
+  return override ? { ...base, ...override } : base;
+}
+
 /** Pick the next stroll target: a hop in a random direction, biased back inside
  *  the leash radius around the parent so children orbit their parent. */
 function pickTarget(ent) {
-  const b = BEHAVIOR[ent.state] || BEHAVIOR.idle;
+  const b = behaviorOf(ent);
   const parent = ent.parentId ? entities.get(ent.parentId) : null;
   let cu = ent.u;
   let cv = ent.v;
@@ -281,7 +298,7 @@ function pickTarget(ent) {
 
 function stepBehavior(ent, dt) {
   if (ent.mode === "held") return;
-  const b = BEHAVIOR[ent.state] || BEHAVIOR.idle;
+  const b = behaviorOf(ent);
 
   if (ent.mode === "act") {
     ent.modeLeft -= dt;

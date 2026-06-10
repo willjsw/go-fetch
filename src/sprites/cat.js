@@ -1,292 +1,312 @@
-// Cat — gray pixel cat sprite sheet (GF-118).
+// Cat — gray pixel cat sprite sheet (GF-118; 32×26 detail pass).
 //
-// Side-view feline (facing right): pointed ears, long expressive tail. Frames
-// are 16×13 grids like every sheet; the engine mirrors for left.
+// Side-view feline (facing right): pointed ears, 2px eyes, long expressive
+// tail. WORKING is now a toy: crouched low, rolling a ball back and forth
+// between both front paws (양손으로 공 굴리기, 4f).
 //
-// State motions: scratch(앞발 긁기+파편) / tailchase(꼬리 잡기 빙글빙글) /
-// hiss(등 세우고 하악질) / mouse(쥐 물고 옴) / curl(몸 말고 잠) / perk(귀
-// 쫑긋 두리번).
+// Other motions: tailchase(꼬리 잡기 빙글빙글) / hiss(등 세우고 하악질, 3f) /
+// mouse(쥐 물고 옴, 3f) / curl(몸 말고 잠, 3f) / perk(귀 쫑긋 두리번, 4f).
 
 const PALETTE = {
   C: "#c9ced8", // fur
-  S: "#969eab", // shade — tail, paws, stripes
+  S: "#969eab", // shade — tail, stripes, far legs
   N: "#22262c", // eyes / nose / mouth
   P: "#ef9aac", // tongue / inner ear
   m: "#8d8d96", // caught mouse
-  D: "#8a6f47", // scratched-up debris
+  o: "#f2a23c", // toy ball
 };
 
-/** Horizontal mirror for the tail-chase loop. */
+const E = "................................";
 const mirror = (grid) => grid.map((row) => [...row].reverse().join(""));
+const edit = (g, edits) => g.map((row, y) => edits[y] ?? row);
 
-// Sitting upright, tail wrapped around the front paws.
+// Sitting upright, tail wrapped around the front.
 const SIT = [
-  "................",
-  ".........C.C....",
-  ".........CCC....",
-  ".........CNC....",
-  ".........CCC....",
-  "........CCCC....",
-  ".......CCCCC....",
-  "......CCCCCC....",
-  "..S..CCCCCCC....",
-  "..SS.CCCCCCC....",
-  "...SSCCCCCCC....",
-  ".....CCCCCCC....",
-  ".....CC..CC.....",
+  "................................",
+  "..................C....C........",
+  "..................CC..CC........",
+  "..................CCCCCC........",
+  "..................CCCCCC........",
+  "..................CNCCNC........",
+  "..................CCNNCC........",
+  "...................CCCC.........",
+  ".................CCCCCC.........",
+  "................CCCCCCC.........",
+  "...............CCCCCCCC.........",
+  "..............CCCCCCCCC.........",
+  "..S...........CCCCCCCCC.........",
+  "..SS..........CCCCCCCCC.........",
+  "...SS.........CCCCCCCCC.........",
+  "....SSS......CCCCCCCCCC.........",
+  "......SSS...CCCCCCCCCCC.........",
+  ".........SSSCCCCCCCCCCC.........",
+  "............CCCCCCCCCCC.........",
+  "............CCCCCCCCCCC.........",
+  "............CCC.CCC..CC.........",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
 ];
 
-// Tail flicks up — the idle swish pair.
-const SIT_FLICK = [
-  "................",
-  ".........C.C....",
-  ".........CCC....",
-  ".........CNC....",
-  ".........CCC....",
-  "..S.....CCCC....",
-  "..S....CCCCC....",
-  "..SS..CCCCCC....",
-  "...S.CCCCCCC....",
-  ".....CCCCCCC....",
-  ".....CCCCCCC....",
-  ".....CCCCCCC....",
-  ".....CC..CC.....",
-];
+// Tail flicks up — the idle swish, three positions for a smooth sweep.
+const SIT_FLICK = edit(SIT, {
+  8: "..S..............CCCCCC.........",
+  9: "..S.............CCCCCCC.........",
+  10: "..SS...........CCCCCCCC.........",
+  11: "...SS.........CCCCCCCCC.........",
+  12: "....S.........CCCCCCCCC.........",
+  13: "..............CCCCCCCCC.........",
+  14: "..............CCCCCCCCC.........",
+  15: ".............CCCCCCCCCC.........",
+  16: "............CCCCCCCCCCC.........",
+  17: "............CCCCCCCCCCC.........",
+});
+const SIT_MID = edit(SIT, {
+  12: "..............CCCCCCCCC.........",
+  13: "S.............CCCCCCCCC.........",
+  14: "SS............CCCCCCCCC.........",
+  15: ".SSS.........CCCCCCCCCC.........",
+  16: "...SSSS.....CCCCCCCCCCC.........",
+  17: ".......SSSSSCCCCCCCCCCC.........",
+});
 
-// Slinky stride, tail held high.
+// Slinky stride, tail held high behind — 4-step cycle.
 const WALKC_A = [
-  "................",
-  "..S.........C.C.",
-  "..S.........CCC.",
-  "..SS........CNC.",
-  "...S........CCC.",
-  "....CCCCCCCCCC..",
-  "....CCCCCCCCCC..",
-  "....CCCCCCCCC...",
-  "....CCCCCCCCC...",
-  "....CC.....CC...",
-  "...CC.......CC..",
-  "................",
-  "................",
+  "................................",
+  "................................",
+  "................................",
+  "..S......................C....C.",
+  "..S......................CC..CC.",
+  "..SS.....................CCCCCC.",
+  "...S.....................CCCCCC.",
+  "...S.....................CNCCNC.",
+  "....S....................CCNNCC.",
+  "....S...................CCCCC...",
+  ".....CCCCCCCCCCCCCCCCCCCCCCC....",
+  ".....CCCCCCCCCCCCCCCCCCCCCC.....",
+  ".....CCCCCCCCCCCCCCCCCCCC.......",
+  ".....CCCCCCCCCCCCCCCCCCC........",
+  ".....CCCCCCCCCCCCCCCCCCC........",
+  ".....CC...SS.....CC...SS........",
+  ".....CC...SS.....CC...SS........",
+  "....CC...SS.....CC....SS........",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
 ];
 
-const WALKC_B = [
-  "................",
-  "..S.........C.C.",
-  "..SS........CCC.",
-  "...S........CNC.",
-  "...S........CCC.",
-  "....CCCCCCCCCC..",
-  "....CCCCCCCCCC..",
-  "....CCCCCCCCC...",
-  "....CCCCCCCCC...",
-  "......CC.CC.....",
-  "......CC.CC.....",
-  "................",
-  "................",
+const WALKC_B = edit(WALKC_A, {
+  15: ".......CC.SS....CC..SS..........",
+  16: ".......CC.SS....CC..SS..........",
+  17: ".......CC.SS....CC..SS..........",
+});
+const WALKC_C = edit(WALKC_A, {
+  15: ".....SS...CC.....SS...CC........",
+  16: ".....SS...CC.....SS...CC........",
+  17: "....SS....CC....SS....CC........",
+});
+
+// WORKING — crouched low, rolling a toy ball between both front paws.
+const BALL_BASE = [
+  "................................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
+  "..........C....C................",
+  "..........CC..CC................",
+  "..........CCCCCC................",
+  "..........CNCCNC........SS......",
+  "..........CCNNCC.......SS.......",
+  ".........CCCCCCCC....SSS........",
+  "........CCCCCCCCCCSSSS..........",
+  "........CCCCCCCCCCCC............",
+  "........CCCCCCCCCCCC............",
+  "........CC.CCCC.CC..............",
+  "........CC.oooo.CC..............",
+  "...........oooo.................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
 ];
 
-// Scratch: rump high, front low, paws raking the ground, debris flying.
-const SCRATCH_A = [
-  "................",
-  "..SS............",
-  "..SS............",
-  "...CCCCCC.......",
-  "..CCCCCCCC.C.C..",
-  "..CCCCCCCCCCC...",
-  "..CC..CCCCCNC...",
-  "..CC..CCCCCCC...",
-  "..SS..CCCCCC....",
-  ".......CC.......",
-  ".......CC.DD....",
-  "..........D.D...",
-  "................",
-];
+const BALL_L = edit(BALL_BASE, {
+  18: "........CC.CC...CCC.............",
+  19: "......oo.CC.....CC..............",
+  20: ".....oooo.......................",
+  21: ".....oooo.......................",
+});
+const BALL_R = edit(BALL_BASE, {
+  18: "........CCC...CC.CC.............",
+  19: "..........CC.....CC.oo..........",
+  20: "....................oooo........",
+  21: "....................oooo........",
+});
 
-const SCRATCH_B = [
-  "................",
-  "...SS...........",
-  "...SS...........",
-  "...CCCCCC.......",
-  "..CCCCCCCC.C.C..",
-  "..CCCCCCCCCCC...",
-  "..CC..CCCCCNC...",
-  "..CC..CCCCCCC...",
-  "..SS..CCCCCC....",
-  ".........CC.....",
-  "......DD.CC.....",
-  ".....D..D.......",
-  "................",
-];
-
-// Tail-chase: body curled in a tight circle, nose at its own tail tip —
-// mirrored back and forth it reads as spinning in place.
+// Tail-chase: body curled tight, nose at its own tail — mirrored back and
+// forth it reads as spinning in place.
 const CHASE = [
-  "................",
-  "................",
-  "....C.C.........",
-  "....CCC.........",
-  "....CNCCCCC.....",
-  "....CCCCCCCC....",
-  "...CCCCCCCCC....",
-  "...CCC...CCC....",
-  "...CCC...SSC....",
-  "...CCCC.SSCC....",
-  "....CCCCCCC.....",
-  ".....CCCCC......",
-  "................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
+  "........C..C....................",
+  "........CC.CC...................",
+  "........CCCCCCCCCCCCC...........",
+  "........CNCNCCCCCCCCCC..........",
+  "........CCNCCCCCCCCCCCC.........",
+  ".......CCCCCCCCCCCCCCCC.........",
+  ".......CCCCC.......CCCCC........",
+  ".......CCCC.........SSCC........",
+  ".......CCCC........SSCCC........",
+  ".......CCCCC.....SSCCCC.........",
+  "........CCCCCCCCCCCCCC..........",
+  "..........CCCCCCCCCC............",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
 ];
 
-// Hiss: the halloween-cat arch — back spiked, tail bolt upright, mouth open.
+// Hiss: the halloween-cat arch — spiked back, bolt tail, open mouth.
 const HISS_A = [
-  "................",
-  ".S..............",
-  ".S...C.C.C......",
-  ".SS.CCCCCC......",
-  "..SCCCCCCCC.C.C.",
-  "...CCCCCCCCCCC..",
-  "....CCCCCCCNCC..",
-  "....CCCCCCCCNP..",
-  "....CC....CCC...",
-  "....CC....CC....",
-  "....SS....CC....",
-  "..........SS....",
-  "................",
+  "................................",
+  "................................",
+  "..S.............................",
+  "..S...C.C.C.C.C.................",
+  "..SS..CCCCCCCCCC................",
+  "...SCCCCCCCCCCCCCC...C..C.......",
+  "....CCCCCCCCCCCCCCC..CC.C.......",
+  "....CCCCCCCCCCCCCCCCCCCCC.......",
+  "....CCCCCCCCCCCCCCCCCNCNC.......",
+  "....CCCCCCCCCCCCCCCCCCCNN.......",
+  "....CCCCCCCCCCCCCCCCCCCNP.......",
+  "....CCC....CCC.....CCCCC........",
+  "....CCC....CCC.....CCC..........",
+  "....SSS....SSS.....CCC..........",
+  "...................SSS..........",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
 ];
 
-const HISS_B = [
-  "................",
-  ".S..............",
-  ".SS..C.C.C......",
-  "..S.CCCCCC......",
-  "..SCCCCCCCC.C.C.",
-  "...CCCCCCCCCCC..",
-  "....CCCCCCCNCC..",
-  "....CCCCCCCCNN..",
-  "....CC....CCC...",
-  "....CC....CC....",
-  "....SS....CC....",
-  "..........SS....",
-  "................",
-];
+const HISS_B = edit(HISS_A, {
+  2: "..SS............................",
+  3: "...S..C.C.C.C.C.................",
+  9: "....CCCCCCCCCCCCCCCCCCCNN.......",
+  10: "....CCCCCCCCCCCCCCCCCCCNN.......",
+});
+const HISS_C = edit(
+  HISS_A.map((row) => "." + row.slice(0, 31)),
+  {},
+);
 
-// Trophy mouse dangling from the mouth, tail swinging proudly.
-const MOUSE_A = [
-  "................",
-  "..S.........C.C.",
-  "..S.........CCC.",
-  "..SS........CNC.",
-  "...S........CCC.",
-  "....CCCCCCCCCC..",
-  "....CCCCCCCCCCm.",
-  "....CCCCCCCCCmm.",
-  "....CCCCCCCCC...",
-  "....CC.....CC...",
-  "....CC.....CC...",
-  "................",
-  "................",
-];
+// Trophy mouse dangling from the mouth, tail swinging proudly (3f).
+const mouseRows = {
+  8: "....S....................CCNNCC.",
+  9: "....S...................CCCCCm..",
+  10: ".....CCCCCCCCCCCCCCCCCCCCCCCmm..",
+  11: ".....CCCCCCCCCCCCCCCCCCCCCCm....",
+};
+const MOUSE_A = edit(WALKC_A, mouseRows);
+const MOUSE_B = edit(WALKC_B, mouseRows);
+const MOUSE_C = edit(WALKC_C, mouseRows);
 
-const MOUSE_B = [
-  "................",
-  "..S.........C.C.",
-  "..SS........CCC.",
-  "...S........CNC.",
-  "...S........CCC.",
-  "....CCCCCCCCCC..",
-  "....CCCCCCCCCCm.",
-  "....CCCCCCCCCmm.",
-  "....CCCCCCCCCm..",
-  "....CC.....CC...",
-  "....CC.....CC...",
-  "................",
-  "................",
-];
-
-// Curled sleep: a gray cinnamon roll with an ear poking out.
+// Curled sleep: a gray cinnamon roll, breathing.
 const CURL_A = [
-  "................",
-  "................",
-  "................",
-  "................",
-  "................",
-  "......C.C.......",
-  "....CCCCCCC.....",
-  "...CCCCCCCCC....",
-  "..CCCCCCCCCCC...",
-  "..CCCSSSSCCCC...",
-  "..CCCCCCCCCCC...",
-  "...CCCCCCCCC....",
-  "................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
+  "...........C..C.................",
+  ".........CCCCCCCCCC.............",
+  "........CCCCCCCCCCCC............",
+  ".......CCCCCCCCCCCCCC...........",
+  ".......CCCCSSSSSSCCCC...........",
+  ".......CCCCCCCCCCCCCC...........",
+  "........CCCCCCCCCCCC............",
+  ".........CCCCCCCCCC.............",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
 ];
 
-const CURL_B = [
-  "................",
-  "................",
-  "................",
-  "................",
-  "................",
-  "......C.C.......",
-  "....CCCCCCC.....",
-  "...CCCCCCCCC....",
-  "..CCCCCCCCCCCC..",
-  "..CCCSSSSCCCCC..",
-  "..CCCCCCCCCCCC..",
-  "...CCCCCCCCC....",
-  "................",
-];
+const CURL_B = edit(CURL_A, {
+  12: "........CCCCCCCCCCCCC...........",
+  13: ".......CCCCCCCCCCCCCCC..........",
+  14: ".......CCCCSSSSSSCCCCC..........",
+  15: ".......CCCCCCCCCCCCCCC..........",
+});
+const CURL_C = edit(CURL_A, {
+  10: "................................",
+  11: "...........C..C.................",
+  12: ".........CCCCCCCCCC.............",
+});
 
-// Perk: ears up, head swivels — something moved.
-const PERK_L = [
-  "................",
-  ".........C.C....",
-  ".........CCC....",
-  ".........NCC....",
-  ".........CCC....",
-  "........CCCC....",
-  ".......CCCCC....",
-  "......CCCCCC....",
-  "..S..CCCCCCC....",
-  "..SS.CCCCCCC....",
-  "...SSCCCCCCC....",
-  ".....CCCCCCC....",
-  ".....CC..CC.....",
-];
-
-const PERK_R = [
-  "................",
-  ".........C.C....",
-  ".........CCC....",
-  ".........CCN....",
-  ".........CCC....",
-  "........CCCC....",
-  ".......CCCCC....",
-  "......CCCCCC....",
-  "..S..CCCCCCC....",
-  "..SS.CCCCCCC....",
-  "...SSCCCCCCC....",
-  ".....CCCCCCC....",
-  ".....CC..CC.....",
-];
+// Perk: ears up, eyes dart — something moved.
+const PERK_L = edit(SIT, {
+  5: "..................NCCCNC........",
+});
+const PERK_R = edit(SIT, {
+  5: "..................CNCCCN........",
+});
 
 export default {
   name: "cat",
-  size: [16, 13],
+  size: [32, 26],
   palette: PALETTE,
   anims: {
-    idle: { fps: 2, frames: [SIT, SIT_FLICK] },
-    walk: { fps: 6, frames: [WALKC_A, WALKC_B] },
-    walkFront: { fps: 6, frames: [WALKC_A, WALKC_B] },
-    walkBack: { fps: 6, frames: [WALKC_A, WALKC_B] },
-    scratch: { fps: 8, frames: [SCRATCH_A, SCRATCH_B] },
-    tailchase: { fps: 4, frames: [CHASE, mirror(CHASE)] },
-    hiss: { fps: 6, frames: [HISS_A, HISS_B] },
-    mouse: { fps: 3, frames: [MOUSE_A, MOUSE_B] },
-    curl: { fps: 1, frames: [CURL_A, CURL_B] },
+    idle: { fps: 3, frames: [SIT, SIT_MID, SIT_FLICK, SIT_MID] },
+    walk: { fps: 8, frames: [WALKC_A, WALKC_B, WALKC_C, WALKC_B] },
+    walkFront: { fps: 8, frames: [WALKC_A, WALKC_B, WALKC_C, WALKC_B] },
+    walkBack: { fps: 8, frames: [WALKC_A, WALKC_B, WALKC_C, WALKC_B] },
+    ball: { fps: 8, frames: [BALL_L, BALL_BASE, BALL_R, BALL_BASE] },
+    tailchase: { fps: 5, frames: [CHASE, mirror(CHASE)] },
+    hiss: { fps: 8, frames: [HISS_A, HISS_B, HISS_C] },
+    mouse: { fps: 4, frames: [MOUSE_A, MOUSE_B, MOUSE_C, MOUSE_B] },
+    curl: { fps: 1.5, frames: [CURL_A, CURL_B, CURL_C] },
     perk: { fps: 2, frames: [PERK_L, SIT, PERK_R, SIT] },
   },
   stateAnims: {
-    working: "scratch",
+    working: "ball",
     waiting: "tailchase",
     error: "hiss",
     done: "mouse",
