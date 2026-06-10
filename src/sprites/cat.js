@@ -21,55 +21,52 @@ const mirror = (grid) => grid.map((row) => [...row].reverse().join(""));
 const edit = (g, edits) => g.map((row, y) => edits[y] ?? row);
 
 // Sitting upright, tail wrapped around the front.
+// Sitting upright: triangle ears, 2px eyes with a real gap, pink nose, striped
+// haunch, vertical front legs, tail curled around the front paws.
 const SIT = [
   "................................",
-  "..................C....C........",
-  "..................CC..CC........",
-  "..................CCCCCC........",
-  "..................CCCCCC........",
-  "..................CNCCNC........",
-  "..................CCNNCC........",
-  "...................CCCC.........",
+  ".................C.....C........",
+  ".................CC...CC........",
+  ".................CCC.CCC........",
+  ".................CCCCCCC........",
+  "................CCCCCCCCC.......",
+  "................CNNCCCNNC.......",
+  "................CNNCCCNNC.......",
+  "................CCCCPCCCC.......",
+  ".................CCCCCCC........",
   ".................CCCCCC.........",
-  "................CCCCCCC.........",
   "...............CCCCCCCC.........",
   "..............CCCCCCCCC.........",
-  "..S...........CCCCCCCCC.........",
-  "..SS..........CCCCCCCCC.........",
-  "...SS.........CCCCCCCCC.........",
-  "....SSS......CCCCCCCCCC.........",
-  "......SSS...CCCCCCCCCCC.........",
-  ".........SSSCCCCCCCCCCC.........",
+  ".............CCCCCCCCCC.........",
   "............CCCCCCCCCCC.........",
-  "............CCCCCCCCCCC.........",
-  "............CCC.CCC..CC.........",
-  "................................",
-  "................................",
+  "...........CCCCCCCCCCCC.........",
+  "..........CCCCCCCCCCCCC.........",
+  "..........CCCCCCCCCCCCC.........",
+  "..........CCCCCSSCCCCCC.........",
+  "..........CCCCC...CC..CC........",
+  "..........CCCCC...CC..CC........",
+  "....SS....CCCCC...CC..CC........",
+  ".....SSSSSCCCCC..CCC.CCC........",
   "................................",
   "................................",
   "................................",
 ];
 
-// Tail flicks up — the idle swish, three positions for a smooth sweep.
-const SIT_FLICK = edit(SIT, {
-  8: "..S..............CCCCCC.........",
-  9: "..S.............CCCCCCC.........",
-  10: "..SS...........CCCCCCCC.........",
-  11: "...SS.........CCCCCCCCC.........",
-  12: "....S.........CCCCCCCCC.........",
-  13: "..............CCCCCCCCC.........",
-  14: "..............CCCCCCCCC.........",
-  15: ".............CCCCCCCCCC.........",
-  16: "............CCCCCCCCCCC.........",
-  17: "............CCCCCCCCCCC.........",
-});
+// Tail sweep: wrapped → lifting → flicked high, for a smooth idle swish.
 const SIT_MID = edit(SIT, {
-  12: "..............CCCCCCCCC.........",
-  13: "S.............CCCCCCCCC.........",
-  14: "SS............CCCCCCCCC.........",
-  15: ".SSS.........CCCCCCCCCC.........",
-  16: "...SSSS.....CCCCCCCCCCC.........",
-  17: ".......SSSSSCCCCCCCCCCC.........",
+  19: "..S.......CCCCC...CC..CC........",
+  20: "..SS......CCCCC...CC..CC........",
+  21: "...SSS....CCCCC...CC..CC........",
+  22: "..........CCCCC..CCC.CCC........",
+});
+const SIT_FLICK = edit(SIT, {
+  16: "..S.......CCCCCCCCCCCCC.........",
+  17: "..S.......CCCCCCCCCCCCC.........",
+  18: "..SS......CCCCCSSCCCCCC.........",
+  19: "...SS.....CCCCC...CC..CC........",
+  20: "....SS....CCCCC...CC..CC........",
+  21: ".....S....CCCCC...CC..CC........",
+  22: "..........CCCCC..CCC.CCC........",
 });
 
 // Slinky stride, tail held high behind — 4-step cycle.
@@ -124,11 +121,11 @@ const BALL_BASE = [
   "................................",
   "................................",
   "................................",
-  "..........C....C................",
-  "..........CC..CC................",
-  "..........CCCCCC................",
-  "..........CNCCNC........SS......",
-  "..........CCNNCC.......SS.......",
+  "..........C.....C...............",
+  "..........CC...CC...............",
+  "..........CCCCCCC...............",
+  "..........CNNCCNNC......SS......",
+  "..........CCCPCCCC.....SS.......",
   ".........CCCCCCCC....SSS........",
   "........CCCCCCCCCCSSSS..........",
   "........CCCCCCCCCCCC............",
@@ -283,10 +280,12 @@ const CURL_C = edit(CURL_A, {
 
 // Perk: ears up, eyes dart — something moved.
 const PERK_L = edit(SIT, {
-  5: "..................NCCCNC........",
+  6: "................NNCCCNNCC.......",
+  7: "................NNCCCNNCC.......",
 });
 const PERK_R = edit(SIT, {
-  5: "..................CNCCCN........",
+  6: "................CCNNCCCNN.......",
+  7: "................CCNNCCCNN.......",
 });
 
 export default {

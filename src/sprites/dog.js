@@ -20,8 +20,8 @@ const PALETTE = {
   c: "#f6ead0", // cream muzzle / chest
   N: "#26262b", // eyes / nose / mouth
   P: "#ef9aac", // tongue
-  R: "#d9413d", // collar (root overlay)
-  T: "#f0c75e", // collar tag
+  R: "#ecc888", // collar pixels — coat-colored by default (invisible);
+  T: "#ecc888", // the ROOT's palette override turns R/T red/gold (rootPalette)
   D: "#8a6f47", // flying dirt
   B: "#efe6c8", // fetched bone
   A: "#e8554d", // growl anger sparks
@@ -48,8 +48,8 @@ const STAND = [
   ".sgs.............eeggggggccccNN.",
   ".sggs............eegggggg.cccc..",
   "..sggs............gggggccccc....",
-  "...sggs...........ggggggg.......",
-  "....sgggggggggggggggggggg.......",
+  "...sggs...........gRRRRRg.......",
+  "....sggggggggggggggggTggg.......",
   ".......gggggggggggggggggg.......",
   ".......gggggggggggccccc.........",
   ".......gggggggggggccccc.........",
@@ -73,7 +73,7 @@ const TAIL_MID = edit(STAND, {
   7: ".................eeggggggccccNN.",
   8: "ss...............eegggggg.cccc..",
   9: "sggs..............gggggccccc....",
-  10: ".sggs.............ggggggg.......",
+  10: ".sggs.............gRRRRRg.......",
 });
 
 const TAIL_LOW = edit(STAND, {
@@ -82,8 +82,8 @@ const TAIL_LOW = edit(STAND, {
   7: ".................eeggggggccccNN.",
   8: ".................eegggggg.cccc..",
   9: "..................gggggccccc....",
-  10: "ss................ggggggg.......",
-  11: "sgggggggggggggggggggggggg.......",
+  10: "ss................gRRRRRg.......",
+  11: "sggggggggggggggggggggTggg.......",
 });
 
 // Walk: 4-frame cycle — contact / pass / opposite contact / pass.
@@ -126,8 +126,8 @@ const FRONT = [
   ".......eegggccNNccgggee.........",
   "........ggggccccccgggg..........",
   ".........gggggggggggg...........",
-  ".........gggggggggggg...........",
-  "........ggggccccccgggg..........",
+  ".........gRRRRRRRRRRg...........",
+  "........ggggcccTccgggg..........",
   "........ggggccccccgggg..........",
   "........ggggccccccgggg..........",
   "........ggggccccccgggg..........",
@@ -185,7 +185,7 @@ const DIG_RAW = [
   "....ggggggggggggggggg...........",
   "....gg..ggggggggggggggee........",
   "....gg..gggggggggggggggee.......",
-  "....gg..gggggggggggggggee.......",
+  "....gg..ggggggggggRRRRgee.......",
   "....ss..ggggggggggNNgggg........",
   "........gggggggggggggggcccc.....",
   "..........ggggggggggggccccccNN..",
@@ -248,7 +248,7 @@ const GROWL_BASE = [
   "................................",
   "..ss......ee....................",
   "..ssggggggeegggg................",
-  "....gggggggggggggggg............",
+  "....ggggggggggRRRRgg............",
   "....ggggggggggggggNNggggNN......",
   "....ggggggggggggggggggggcccc....",
   ".....ggggggggggggggggNcNcNc.....",
@@ -325,7 +325,7 @@ const SLEEP_A = [
   "..sgggggggggggggggggg...........",
   "..ggggggggggggggggggggggee......",
   ".gggggggggggggggggggggNggggg....",
-  ".ggggggggggggggggggggggccccNN...",
+  ".ggggggggggggggggggRRRgccccNN...",
   ".sgggggggggggggggggggggccccc....",
   "................................",
   "................................",
@@ -345,21 +345,14 @@ const SLEEP_C = edit(SLEEP_A, {
   10: "..................zz............",
 });
 
-// ---- Overlays ---------------------------------------------------------------------
-
-// Red collar + gold tag at the neck — drawn over every frame, root only.
-const COLLAR = edit(Array(26).fill(E), {
-  11: "..................RRRRRR........",
-  12: "....................T...........",
-});
-
 const WALK = { fps: 8, frames: [WALK_A, WALK_B, WALK_C, WALK_B] };
 
 export default {
   name: "dog",
   size: [32, 26],
   palette: PALETTE,
-  overlays: { collar: COLLAR },
+  // Root override: the baked-in collar pixels light up red + gold.
+  rootPalette: { R: "#d9413d", T: "#f0c75e" },
   anims: {
     idle: { fps: 3, frames: [STAND, TAIL_MID, TAIL_LOW, TAIL_MID] },
     walk: WALK,

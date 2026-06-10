@@ -124,8 +124,10 @@ function makeEntity(id, role, session, parent) {
   const sheet = activeSheet();
   ent.wrapEl = el.querySelector(".char-wrap");
   ent.sprite = new SpriteAnimator(ent.wrapEl, sheet, {
-    // The collar marks the root; only sheets that define the overlay get it.
-    overlay: role === "root" && sheet.overlays ? "collar" : null,
+    // The collar marks the root: collar pixels are baked into every pose and
+    // rendered in coat color for everyone else — only the root palette turns
+    // them red (sheets without rootPalette simply look the same).
+    palette: role === "root" ? sheet.rootPalette : null,
   });
   el.dataset.state = ent.state;
   applyAnim(ent);
