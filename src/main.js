@@ -219,6 +219,11 @@ function showDetail(sessionId) {
 
   const state = visualKey(session);
   const visual = STATE_VISUALS[state];
+  // Only finished / neglected / unconfirmed sessions may be dismissed (GF-106):
+  // DONE, IDLE, or DETECTING(pending). Active states (working/waiting/error)
+  // are left alone so the user doesn't drop a session that still needs them.
+  const canStop =
+    session.pending || session.state === "idle" || session.state === "done";
 
   const backdrop = document.createElement("div");
   backdrop.className = "detail-backdrop";
@@ -238,8 +243,21 @@ function showDetail(sessionId) {
       <div><dt>Path</dt><dd class="path">${escapeHtml(session.cwd || "—")}</dd></div>
       <div><dt>Elapsed</dt><dd>${formatElapsed(session.idle_seconds)}</dd></div>
     </dl>
-    <button class="detail-close" type="button">Close</button>`;
+    <button class="detail-close" type="button">Close</button>
+    ${canStop ? '<button class="detail-stop" type="button">Stop monitoring</button>' : ""}`;
   popover.querySelector(".detail-close").addEventListener("click", closeDetail);
+  const stopBtn = popover.querySelector(".detail-stop");
+  if (stopBtn)
+    stopBtn.addEventListener("click", async () => {
+      // Remove this session from tracking; the backend dismisses it so the poll
+      // won't re-seed it until it becomes active again (GF-106).
+      try {
+        await invoke("dismiss_session", { id: session.id });
+      } catch (_err) {
+        /* best-effort */
+      }
+      closeDetail();
+    });
   backdrop.appendChild(popover);
   document.body.appendChild(backdrop);
 }

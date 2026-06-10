@@ -14,7 +14,7 @@
 //! The manager is `Clone` (cheap `Arc` clone) and thread-safe so it can be
 //! shared as axum state and read by the widget UI (Task 5).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
@@ -259,6 +259,11 @@ pub enum EventOutcome {
 #[derive(Clone)]
 pub struct SessionManager {
     sessions: Arc<RwLock<HashMap<String, Session>>>,
+    /// Sessions the user explicitly dismissed (Stop monitoring). The
+    /// pre-existing poll won't re-seed these, so a manually-removed session
+    /// stays gone even while its process is still alive — until a real hook
+    /// event for it arrives, which un-dismisses it (it's active again, GF-106).
+    dismissed: Arc<RwLock<HashSet<String>>>,
     idle_after: Duration,
     stale_after: Duration,
 }
@@ -281,6 +286,7 @@ impl SessionManager {
     pub fn with_timeouts(idle_after: Duration, stale_after: Duration) -> Self {
         SessionManager {
             sessions: Arc::new(RwLock::new(HashMap::new())),
+            dismissed: Arc::new(RwLock::new(HashSet::new())),
             idle_after,
             stale_after,
         }
@@ -292,6 +298,15 @@ impl SessionManager {
     /// events map to one of the five states as before. Uses a monotonic clock
     /// injected as `now` for testability.
     pub fn handle_event_at(&self, event: &HookEvent, now: Instant) -> EventOutcome {
+        // Any real hook activity un-dismisses a user-dismissed session, so a
+        // session the user removed reappears once it becomes active again
+        // (GF-106). GoFetch only receives the hooks it registered, all of which
+        // are genuine activity, so this is safe to do for every event.
+        self.dismissed
+            .write()
+            .expect("dismissed lock poisoned")
+            .remove(&event.session_id);
+
         match event.hook_event_name.as_str() {
             "SessionStart" => {
                 let mut sessions = self.sessions.write().expect("session lock poisoned");
@@ -419,6 +434,14 @@ impl SessionManager {
     /// `pending` (state unconfirmed) and non-notifiable; a later real hook event
     /// confirms its state and clears `pending`. Returns `true` if newly seeded.
     pub fn seed_pending(&self, session_id: &str, cwd: Option<String>, now: Instant) -> bool {
+        if self
+            .dismissed
+            .read()
+            .expect("dismissed lock poisoned")
+            .contains(session_id)
+        {
+            return false; // user dismissed this session — don't re-seed it (GF-106)
+        }
         let mut sessions = self.sessions.write().expect("session lock poisoned");
         if sessions.contains_key(session_id) {
             return false; // hook-tracked (or already seeded) session wins
@@ -455,6 +478,19 @@ impl SessionManager {
             .expect("session lock poisoned")
             .remove(session_id)
             .is_some()
+    }
+
+    /// User-initiated removal ("Stop monitoring", GF-106). Removes the session
+    /// AND remembers its id so the pre-existing poll won't immediately re-seed
+    /// it (unlike `remove`, used for SessionEnd/eviction). The session reappears
+    /// only if a real hook event for it arrives later (handled in
+    /// `handle_event_at`, which un-dismisses). Returns whether it was present.
+    pub fn dismiss(&self, session_id: &str) -> bool {
+        self.dismissed
+            .write()
+            .expect("dismissed lock poisoned")
+            .insert(session_id.to_string());
+        self.remove(session_id)
     }
 
     /// Snapshot of all sessions, sorted by monitoring priority then project
@@ -733,6 +769,27 @@ mod tests {
             "recent activity must keep the session alive"
         );
         assert_eq!(m.tick_evict_at(t0 + Duration::from_secs(200)), vec!["s".to_string()]);
+    }
+
+    #[test]
+    fn dismiss_blocks_reseed_until_real_hook() {
+        let m = SessionManager::new();
+        m.seed_pending("s", None, Instant::now());
+        assert_eq!(m.len(), 1);
+
+        // User dismisses it → removed and remembered.
+        assert!(m.dismiss("s"));
+        assert!(m.is_empty());
+        // The poll must NOT re-seed a dismissed session (GF-106).
+        assert!(!m.seed_pending("s", None, Instant::now()));
+        assert!(m.is_empty(), "dismissed session stays gone against polling");
+
+        // A real hook event un-dismisses it (it's active again).
+        m.handle_event(&event("s", "PreToolUse"));
+        assert_eq!(m.len(), 1, "new activity un-dismisses and re-tracks");
+        // After un-dismiss, polling could seed it again too.
+        m.remove("s");
+        assert!(m.seed_pending("s", None, Instant::now()), "no longer dismissed → seedable");
     }
 
     #[test]
