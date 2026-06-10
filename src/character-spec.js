@@ -27,10 +27,21 @@ export const CLOUD = "#dfe3ee"; // soft cloud under the root Fetchy
  * reads bigger and sub-agents (depth 2) read smaller.
  */
 export const SIZE_TIERS = {
-  root: 64, // Claude Code itself (always shown)
+  // Claude Code itself (always shown). Bumped from 64 so the bigger cloud
+  // (ROOT_VIEWBOX, ~36 units tall vs 24) renders at the same per-unit scale —
+  // i.e. the Fetchy keeps its size while the cloud grows ~2–3×.
+  root: 96,
   session: 44, // one Claude Code session
   subagent: 30, // a sub-agent within a session (Layer 2, GF-112+)
 };
+
+/**
+ * Expanded viewBox used only for the root Fetchy so the larger cloud has room
+ * below/around the body without clipping. Same per-unit scale as the 24×24
+ * grid (36 units in a 96px box ≈ 24 units in a 64px box), so the character
+ * itself is unchanged — only the drawable area (for the cloud) grew.
+ */
+export const ROOT_VIEWBOX = "-6 -2 36 36";
 
 // State-specific features (eyes / mouth / accessory). Coordinates are on the
 // 24×24 grid; the head occupies roughly x:3..21, y:4..20.
@@ -96,10 +107,13 @@ export const ARMS = `
     <rect class="gf-arm gf-arm-l" x="1" y="11" width="2" height="4" fill="${BODY}"/>
     <rect class="gf-arm gf-arm-r" x="21" y="11" width="2" height="4" fill="${BODY}"/>`;
 
-// A small pixel cloud below the root Fetchy (AM-10) — sits under the body so
-// the parent reads as "floating". The whole SVG gets the `gf-float` motion.
+// A puffy pixel cloud the root Fetchy rides on (AM-10). Drawn in the expanded
+// ROOT_VIEWBOX bottom region (x −4..28, y 21..32) so it's ~2–3× the old cloud
+// (was ~16×4 units → now ~32×11). Bottom-widest, with puffs just under the
+// body. The whole SVG gets the `gf-float` motion, so the cloud drifts too.
 export const ROOT_CLOUD = `
-    <rect class="gf-cloud" x="6" y="21" width="12" height="2" fill="${CLOUD}"/>
-    <rect class="gf-cloud" x="4" y="22" width="16" height="1" fill="${CLOUD}"/>
-    <rect class="gf-cloud" x="8" y="20" width="3" height="1" fill="${CLOUD}"/>
-    <rect class="gf-cloud" x="13" y="20" width="3" height="1" fill="${CLOUD}"/>`;
+    <rect class="gf-cloud" x="-4" y="28" width="32" height="4" fill="${CLOUD}"/>
+    <rect class="gf-cloud" x="-1" y="25" width="26" height="3" fill="${CLOUD}"/>
+    <rect class="gf-cloud" x="2" y="23" width="9" height="2" fill="${CLOUD}"/>
+    <rect class="gf-cloud" x="14" y="22" width="9" height="3" fill="${CLOUD}"/>
+    <rect class="gf-cloud" x="8" y="21" width="6" height="2" fill="${CLOUD}"/>`;

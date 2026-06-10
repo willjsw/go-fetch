@@ -8,7 +8,7 @@
 // Visual data (colors, expressions, parts, size tiers) lives in
 // character-spec.js so it can be edited without touching this render logic.
 
-import { STATE_COLOR, BODY, EXPRESSIONS, ARMS, ROOT_CLOUD } from "./character-spec.js";
+import { STATE_COLOR, BODY, EXPRESSIONS, ARMS, ROOT_CLOUD, ROOT_VIEWBOX } from "./character-spec.js";
 
 // Re-export so existing consumers can keep importing STATE_COLOR from here.
 export { STATE_COLOR };
@@ -32,7 +32,10 @@ export function characterSvg(state, opts = {}) {
   const arms = key === "working" ? ARMS : ""; // arms only while working (WC-11)
   const cloud = role === "root" ? ROOT_CLOUD : ""; // floating cloud (AM-10)
   const roleClass = role ? ` gf-char-${role}` : "";
-  return `<svg class="gf-char gf-char-${key}${roleClass}" viewBox="0 0 24 24" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="${key}">
+  // Root uses an expanded viewBox so the bigger cloud has room (same per-unit
+  // scale, so the character itself is unchanged).
+  const viewBox = role === "root" ? ROOT_VIEWBOX : "0 0 24 24";
+  return `<svg class="gf-char gf-char-${key}${roleClass}" viewBox="${viewBox}" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="${key}">
     <rect x="11" y="1" width="2" height="3" fill="${BODY}"/>
     <rect x="10" y="0" width="4" height="2" fill="${color}"/>
     <path d="${head}" fill="${BODY}"/>
