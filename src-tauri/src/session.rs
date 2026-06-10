@@ -6,8 +6,11 @@
 //! corrections:
 //!   - `Stop` fires on **every** response turn, so it maps to `Done` but the
 //!     notification layer (Task 7) debounces it (FIX-1).
-//!   - `Notification` is split by `notification_type`: `permission_prompt` and
-//!     `idle_prompt` are the precise "waiting for you" signals (A4).
+//!   - `Notification` is subscribed only for the `permission_prompt` /
+//!     `idle_prompt` matchers (the precise "waiting for you" signals, A4). The
+//!     matcher filters which notifications fire; the **body does not carry the
+//!     type** (only `message`), so any `Notification` we receive is a waiting
+//!     signal regardless of whether a `notification_type` field is present.
 //!   - `UserPromptSubmit` means the user replied, so the session goes back to
 //!     active (FIX-4).
 //!
@@ -232,8 +235,20 @@ fn map_event_to_state(event: &HookEvent) -> Option<SessionState> {
     match event.hook_event_name.as_str() {
         "PreToolUse" | "PostToolUse" => Some(SessionState::Working),
         "Notification" => match event.notification_type.as_deref() {
+            // Explicitly-typed waiting notifications — kept for forward-compat in
+            // case a future Claude Code version echoes the type into the body.
             Some("permission_prompt") | Some("idle_prompt") => Some(SessionState::Waiting),
-            _ => None,
+            // The real Claude Code `Notification` body carries only `message`;
+            // there is NO `notification_type` field — the type is matched by the
+            // hook `matcher` (verified: code.claude.com/docs/en/hooks). We only
+            // ever subscribe to the `permission_prompt` / `idle_prompt` matchers
+            // (hook_installer.rs), so any `Notification` that reaches us is a
+            // "waiting for you" signal → Waiting. Without this, the field was
+            // always `None` and the session never entered Waiting.
+            None => Some(SessionState::Waiting),
+            // A different, explicitly-typed notification we did not subscribe to
+            // (e.g. `auth_success`) — leave the state unchanged.
+            Some(_) => None,
         },
         "StopFailure" => Some(SessionState::Error),
         "Stop" => Some(SessionState::Done),
@@ -693,6 +708,33 @@ mod tests {
             "notification_type": "auth_success"
         }));
         assert_eq!(m.handle_event(&auth), EventOutcome::Ignored);
+    }
+
+    /// Regression: the real Claude Code `Notification` body has NO
+    /// `notification_type` field — only `message` — and the waiting type is
+    /// matched by the hook `matcher`, not echoed into the payload. Since GoFetch
+    /// only subscribes to the `permission_prompt`/`idle_prompt` matchers, such a
+    /// (type-less) Notification must still transition the session to Waiting.
+    /// Previously this fell through to `Ignored`, so the widget never showed
+    /// "waiting for permission".
+    #[test]
+    fn notification_without_type_field_is_waiting() {
+        let m = SessionManager::new();
+        let perm = event_json(serde_json::json!({
+            "session_id": "s",
+            "hook_event_name": "Notification",
+            "cwd": "/x/proj",
+            "message": "Claude needs your permission to use Bash"
+        }));
+        assert_eq!(
+            m.handle_event(&perm),
+            EventOutcome::Changed(SessionState::Waiting),
+            "a Notification with no notification_type must still be Waiting"
+        );
+        let snap = m.snapshot();
+        assert_eq!(snap[0].state, SessionState::Waiting);
+        // No type field → generic waiting summary (best-effort), never a crash.
+        assert_eq!(snap[0].summary, "waiting");
     }
 
     #[test]
