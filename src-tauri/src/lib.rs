@@ -229,12 +229,29 @@ pub fn run() {
                     if !visible {
                         continue;
                     }
-                    for entry in preexisting::poll_active_sessions().await {
-                        if let Some(id) = entry.session_id.as_deref() {
-                            if p_manager.seed_pending(id, entry.cwd.clone(), std::time::Instant::now())
-                            {
+                    // `None` = the poll couldn't run (degrade to hook-only, don't
+                    // touch tracked sessions). `Some` = a clean snapshot of live
+                    // sessions: seed the ones we don't track yet (hook-first) and
+                    // refresh liveness for the rest so they aren't stale-evicted.
+                    if let Some(entries) = preexisting::poll_active_sessions().await {
+                        let now = std::time::Instant::now();
+                        let mut seeded = 0usize;
+                        for entry in &entries {
+                            let Some(id) = entry.session_id.as_deref() else {
+                                continue;
+                            };
+                            if p_manager.seed_pending(id, entry.cwd.clone(), now) {
+                                seeded += 1;
                                 (p_notify)(id);
+                            } else {
+                                p_manager.touch_seen(id, now);
                             }
+                        }
+                        if seeded > 0 {
+                            eprintln!(
+                                "[gofetch] pre-existing poll: {} active session(s), {seeded} newly shown",
+                                entries.len()
+                            );
                         }
                     }
                 }
