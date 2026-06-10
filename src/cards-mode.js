@@ -9,7 +9,7 @@
 
 import { STATE_COLOR } from "./character-spec.js";
 import { SpriteAnimator } from "./sprite-engine.js";
-import dogSheet from "./sprites/dog.js";
+import { activeSheet, onCharacterChange } from "./character-store.js";
 import { STATE_VISUALS, visualKey, formatElapsed } from "./utils.js";
 
 /** session id → { el, sprite, state } persisted across renders. */
@@ -30,9 +30,19 @@ function makeCard(session, onSelect) {
       <div class="elapsed"></div>
     </div>`;
   card.addEventListener("click", () => onSelect(session.id));
-  const sprite = new SpriteAnimator(card.querySelector(".char"), dogSheet);
+  const sprite = new SpriteAnimator(card.querySelector(".char"), activeSheet());
   return { el: card, sprite, state: null };
 }
+
+// Character switch (GF-118): drop every card; the next render rebuilds them
+// with the new sheet.
+onCharacterChange(() => {
+  for (const entry of cards.values()) {
+    entry.sprite.destroy();
+    entry.el.remove();
+  }
+  cards.clear();
+});
 
 function patchCard(entry, session) {
   const state = visualKey(session);
@@ -40,7 +50,7 @@ function patchCard(entry, session) {
   if (entry.state !== state) {
     entry.state = state;
     entry.el.className = `session-card state-${state}`;
-    entry.sprite.setAnim(dogSheet.stateAnims[state] || "idle", STATE_COLOR[state]);
+    entry.sprite.setAnim(activeSheet().stateAnims[state] || "idle", STATE_COLOR[state]);
   }
   const set = (sel, text) => {
     const el = entry.el.querySelector(sel);

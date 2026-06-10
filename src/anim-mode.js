@@ -15,7 +15,7 @@
 
 import { STATE_COLOR, SIZE_TIERS } from "./character-spec.js";
 import { SpriteAnimator } from "./sprite-engine.js";
-import dogSheet from "./sprites/dog.js";
+import { activeSheet, onCharacterChange } from "./character-store.js";
 import { escapeHtml, visualKey } from "./utils.js";
 import { buildForest } from "./tree.js";
 import { ensureHarnessLayer, drawHarness } from "./harness.js";
@@ -121,9 +121,11 @@ function makeEntity(id, role, session, parent) {
     dragMoved: false,
     sprite: null,
   };
+  const sheet = activeSheet();
   ent.wrapEl = el.querySelector(".char-wrap");
-  ent.sprite = new SpriteAnimator(ent.wrapEl, dogSheet, {
-    overlay: role === "root" ? "collar" : null,
+  ent.sprite = new SpriteAnimator(ent.wrapEl, sheet, {
+    // The collar marks the root; only sheets that define the overlay get it.
+    overlay: role === "root" && sheet.overlays ? "collar" : null,
   });
   el.dataset.state = ent.state;
   applyAnim(ent);
@@ -177,7 +179,7 @@ function setEntityState(ent, state) {
   if (ent.state === key) return;
   ent.state = key;
   ent.el.dataset.state = key;
-  const b = BEHAVIOR[key] || BEHAVIOR.idle;
+  const b = behaviorOf(ent);
   if (!b.roam && ent.mode !== "held") {
     // Attention states (waiting/error/done) pin immediately: stop mid-stroll
     // and act the new motion where the dog stands.
@@ -194,10 +196,18 @@ function setEntityState(ent, state) {
 /** Choose the sprite animation for the entity's current mode + state. */
 function applyAnim(ent) {
   const color = STATE_COLOR[ent.state];
+  const sheet = activeSheet();
   if (ent.mode === "stroll") {
     const du = ent.tu - ent.u;
     const dv = ent.tv - ent.v;
-    if (Math.abs(dv) > Math.abs(du) * 1.6) {
+    // A sheet may override how a state MOVES (e.g. the robot flies as a UFO
+    // while working) — otherwise pick a directional walk.
+    const override = sheet.moveAnims && sheet.moveAnims[ent.state];
+    if (override) {
+      ent.sprite.setAnim(override, color);
+      ent.facing = du < 0;
+      ent.sprite.setFlip(ent.facing);
+    } else if (Math.abs(dv) > Math.abs(du) * 1.6) {
       ent.sprite.setAnim(dv > 0 ? "walkFront" : "walkBack", color);
       ent.sprite.setFlip(false);
     } else {
@@ -206,10 +216,21 @@ function applyAnim(ent) {
       ent.sprite.setFlip(ent.facing);
     }
   } else {
-    ent.sprite.setAnim(dogSheet.stateAnims[ent.state] || "idle", color);
+    ent.sprite.setAnim(sheet.stateAnims[ent.state] || "idle", color);
     ent.sprite.setFlip(ent.facing);
   }
 }
+
+// Character switch (GF-118): tear every entity down immediately — the next
+// render rebuilds the cast with the new sheet at the same logical positions
+// being lost is fine; they re-scatter around their parents.
+onCharacterChange(() => {
+  for (const ent of entities.values()) {
+    ent.sprite.destroy();
+    ent.el.remove();
+  }
+  entities.clear();
+});
 
 // ---------------------------------------------------------------------------
 // Behavior (per-frame)
@@ -226,10 +247,19 @@ function leashOf(ent) {
   return ent.role === "subagent" ? LEASH_SUB : LEASH_SESSION;
 }
 
+/** Stroll personality for an entity — the sheet may override per state (the
+ *  robot-UFO zips around while working; a dog digs mostly in place). */
+function behaviorOf(ent) {
+  const base = BEHAVIOR[ent.state] || BEHAVIOR.idle;
+  const sheet = activeSheet();
+  const override = sheet.behavior && sheet.behavior[ent.state];
+  return override ? { ...base, ...override } : base;
+}
+
 /** Pick the next stroll target: a hop in a random direction, biased back inside
  *  the leash radius around the parent so children orbit their parent. */
 function pickTarget(ent) {
-  const b = BEHAVIOR[ent.state] || BEHAVIOR.idle;
+  const b = behaviorOf(ent);
   const parent = ent.parentId ? entities.get(ent.parentId) : null;
   let cu = ent.u;
   let cv = ent.v;
@@ -268,7 +298,7 @@ function pickTarget(ent) {
 
 function stepBehavior(ent, dt) {
   if (ent.mode === "held") return;
-  const b = BEHAVIOR[ent.state] || BEHAVIOR.idle;
+  const b = behaviorOf(ent);
 
   if (ent.mode === "act") {
     ent.modeLeft -= dt;
@@ -433,7 +463,7 @@ function wirePointer(ent) {
         ent.held = true;
         ent.mode = "held";
         el.classList.add("held");
-        ent.sprite.setAnim(dogSheet.stateAnims[ent.state] || "idle", STATE_COLOR[ent.state]);
+        ent.sprite.setAnim(activeSheet().stateAnims[ent.state] || "idle", STATE_COLOR[ent.state]);
       }
       const dims = stageDims();
       dims.density = densityScale();
