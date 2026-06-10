@@ -254,23 +254,15 @@ body {
 .gf-quiet .anim-node:not(.anim-root) .char-wrap {
   animation-play-state: paused;
 }
-/* …and pause ALL character motion while the window is hidden/minimized. */
-.gf-paused .gf-char,
-.gf-paused .gf-body,
-.gf-paused .gf-paw-l,
-.gf-paused .gf-paw-r,
-.gf-paused .gf-dot,
+/* …and pause ALL character motion while the window is hidden/minimized.
+   (Sprite frame advancing pauses in JS — sprite-engine.js skips hidden docs.) */
 .gf-paused .char-wrap {
   animation-play-state: paused !important;
 }
 
-/* Hard reduced-motion floor: no ambient/bounce/spawn motion at all. */
+/* Hard reduced-motion floor: no ambient/bounce/spawn motion at all.
+   (The sprite engine separately freezes on frame 0 under reduced motion.) */
 @media (prefers-reduced-motion: reduce) {
-  .gf-char,
-  .gf-body,
-  .gf-paw-l,
-  .gf-paw-r,
-  .gf-dot,
   .anim-node .char-wrap,
   .anim-spawn,
   .anim-despawn {
@@ -286,26 +278,6 @@ body {
   image-rendering: pixelated;
 }
 
-/* ---- Pixel character (SVG) ---- */
-.gf-char {
-  display: block;
-  width: 100%;
-  height: 100%;
-  image-rendering: pixelated;
-}
-
-/* SVG groups/parts transform around their own box (pup bob/spin, paw dig). */
-.gf-body,
-.gf-dot {
-  transform-box: fill-box;
-  transform-origin: center;
-}
-.gf-paw-l,
-.gf-paw-r {
-  transform-box: fill-box;
-  transform-origin: center top;
-}
-
 .char {
   flex: 0 0 auto;
   width: 40px;
@@ -317,80 +289,14 @@ body {
   height: 72px;
 }
 
-/* Per-state motion targets the `.gf-body` group (the pup), so the root's cloud
-   — a sibling group — stays still while only the pup moves (GF-108 #4). */
-@media (prefers-reduced-motion: no-preference) {
-  .gf-char-working .gf-body { animation: gf-bob 1.3s ease-in-out infinite; }
-  .gf-char-waiting .gf-body { animation: gf-pulse 1.6s ease-in-out infinite; }
-  .gf-char-error .gf-body { animation: gf-shake 0.5s ease-in-out infinite; }
-  .gf-char-done .gf-body { animation: gf-pop 1.8s ease-in-out infinite; }
-  .gf-char-idle .gf-body { animation: gf-sway 3.5s ease-in-out infinite; }
-  /* pending: spin in place like a pup turning around (GF-108). */
-  .gf-char-pending .gf-body { animation: gf-spin 1.4s linear infinite; }
-  /* root pup bobs gently; its cloud group stays put (GF-108 #4). */
-  .gf-char-root .gf-body { animation: gf-float 3.2s ease-in-out infinite; }
-  /* working: front paws dig the ground, fast + out of phase — same cadence as
-     the old robot arm-flap (0.22s) but pawing the dirt (GF-108). */
-  .gf-char-working .gf-paw-l { animation: gf-dig-l 0.22s ease-in-out infinite; }
-  .gf-char-working .gf-paw-r { animation: gf-dig-r 0.22s ease-in-out infinite; }
-  /* The root pup just bobs gently — it never digs (GF-108 #4). */
-  .gf-char-root .gf-paw-l,
-  .gf-char-root .gf-paw-r { animation: none; }
-  /* scattered dots flutter/drift (도트 흩날림), staggered. */
-  .gf-dot { animation: gf-dot-drift 2.2s ease-in-out infinite; }
-  .gf-dot-2 { animation-delay: 0.4s; }
-  .gf-dot-3 { animation-delay: 0.8s; }
-  .gf-dot-4 { animation-delay: 1.2s; }
+/* Per-state pixel motion is frame-based now (sprites/dog.js + sprite-engine.js,
+   GF-117): dig / spin / growl / fetch / sleep / look frames replace the old
+   CSS transform tricks. Only the cross-cutting dimming stays in CSS. */
+.anim-node[data-state="idle"] .char-wrap {
+  opacity: 0.65;
 }
-/* idle pup is dimmed; the root stays full opacity. */
-.gf-char-idle { opacity: 0.65; }
-.gf-char-root { opacity: 1; }
-
-@keyframes gf-bob {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-1.5px); }
-}
-@keyframes gf-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.6; }
-}
-@keyframes gf-shake {
-  0%, 100% { transform: translateX(0); }
-  25% { transform: translateX(-1.5px); }
-  75% { transform: translateX(1.5px); }
-}
-@keyframes gf-pop {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.08); }
-}
-@keyframes gf-sway {
-  0%, 100% { transform: rotate(-2deg); }
-  50% { transform: rotate(2deg); }
-}
-/* Root pup floating drift (AM-10). */
-@keyframes gf-float {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-2px); }
-}
-/* Pending: spin in place (빙글빙글). */
-@keyframes gf-spin {
-  from { transform: rotate(0); }
-  to { transform: rotate(360deg); }
-}
-/* Digging: paws scratch down/back, out of phase (one down while the other is up)
-   for a rapid "땅 파헤치기". */
-@keyframes gf-dig-l {
-  0%, 100% { transform: translateY(0) rotate(0); }
-  50% { transform: translateY(2px) rotate(-14deg); }
-}
-@keyframes gf-dig-r {
-  0%, 100% { transform: translateY(2px) rotate(14deg); }
-  50% { transform: translateY(0) rotate(0); }
-}
-/* Dots drift up and fade, scattering. */
-@keyframes gf-dot-drift {
-  0%, 100% { transform: translateY(0); opacity: 0.85; }
-  50% { transform: translateY(-3px); opacity: 0.35; }
+.anim-root .char-wrap {
+  opacity: 1;
 }
 
 /* The `hidden` attribute must win over the `display:flex` rules below, which it
