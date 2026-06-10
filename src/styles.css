@@ -228,6 +228,28 @@ body {
   50% { transform: translateY(-3px); }
 }
 
+/* Done / waiting / error bounce higher and faster — a cheerful "통통" so a
+   finished, waiting, or errored session is hard to miss. Declared after the
+   default bounce so it wins at equal specificity; the per-state SVG motion
+   (pop/pulse/shake) still layers on top. Targets the node's data-state, which
+   anim-mode.js keeps in sync. */
+@media (prefers-reduced-motion: no-preference) {
+  .anim-node[data-state="done"] .char-wrap,
+  .anim-node[data-state="waiting"] .char-wrap,
+  .anim-node[data-state="error"] .char-wrap {
+    animation: gf-bounce-lively 0.85s ease-in-out infinite;
+    animation-delay: var(--bounce-delay, 0s);
+  }
+}
+@keyframes gf-bounce-lively {
+  0% { transform: translateY(0); }
+  22% { transform: translateY(-9px); }
+  40% { transform: translateY(0); }
+  55% { transform: translateY(-4px); }
+  70% { transform: translateY(0); }
+  100% { transform: translateY(0); }
+}
+
 /* G1 perf: pause ambient bounce when nothing is active (quiet)… */
 .gf-quiet .anim-node:not(.anim-root) .char-wrap {
   animation-play-state: paused;
