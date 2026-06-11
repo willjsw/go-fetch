@@ -75,6 +75,121 @@ let rafId = null;
 let lastTick = 0;
 let resizeObserver = null;
 
+/** Align mode (GF-127): when on, the cast lines up in three hierarchy rows —
+ *  root (Claude Code) on top, sessions in the middle, sub-agents at the bottom
+ *  under their parents — instead of free-roaming. Persisted across runs. */
+const ALIGN_KEY = "gofetch:anim-align";
+let alignedMode = (() => {
+  try {
+    return localStorage.getItem(ALIGN_KEY) === "1";
+  } catch (_err) {
+    return false;
+  }
+})();
+
+function setAligned(on) {
+  alignedMode = !!on;
+  try {
+    localStorage.setItem(ALIGN_KEY, alignedMode ? "1" : "0");
+  } catch (_err) {
+    /* persistence is best-effort */
+  }
+  // Leaving align mode: nudge everyone to pick fresh stroll targets soon.
+  if (!alignedMode) {
+    for (const ent of entities.values()) {
+      if (ent.mode !== "held") {
+        ent.mode = "act";
+        ent.modeLeft = rand(0.2, 0.8);
+      }
+    }
+  }
+}
+
+/** Row positions (v) for the three hierarchy tiers in align mode. */
+const ALIGN_V = { root: 0.12, session: 0.55, subagent: 0.88 };
+const ALIGN_SUB_SPREAD = 0.09; // u-offset between siblings under one parent
+
+/**
+ * Compute the lined-up slot for every entity: sessions spread evenly across
+ * the middle row (alphabetical by project, stable), sub-agents centered under
+ * their parent's slot, the overflow node at the end of the session row.
+ * @returns {Map<string, {u:number, v:number}>}
+ */
+function alignSlots() {
+  const slots = new Map();
+  slots.set(ROOT_ID, { u: 0.5, v: ALIGN_V.root });
+
+  const sessions = [...entities.values()]
+    .filter((e) => e.role === "session")
+    .sort((a, b) => {
+      const ap = a.session ? a.session.project_name : "";
+      const bp = b.session ? b.session.project_name : "";
+      return ap.localeCompare(bp) || a.id.localeCompare(b.id);
+    });
+  const overflow = entities.get(OVERFLOW_ID);
+  const rowLen = sessions.length + (overflow ? 1 : 0);
+  sessions.forEach((ent, i) => {
+    slots.set(ent.id, { u: (i + 1) / (rowLen + 1), v: ALIGN_V.session });
+  });
+  if (overflow) {
+    slots.set(OVERFLOW_ID, { u: rowLen / (rowLen + 1), v: ALIGN_V.session });
+  }
+
+  const subs = [...entities.values()]
+    .filter((e) => e.role === "subagent")
+    .sort((a, b) => a.id.localeCompare(b.id));
+  const byParent = new Map();
+  for (const sub of subs) {
+    if (!byParent.has(sub.parentId)) byParent.set(sub.parentId, []);
+    byParent.get(sub.parentId).push(sub);
+  }
+  for (const [parentId, siblings] of byParent) {
+    const anchor = slots.get(parentId) || { u: 0.5 };
+    siblings.forEach((sub, idx) => {
+      const u = anchor.u + (idx - (siblings.length - 1) / 2) * ALIGN_SUB_SPREAD;
+      slots.set(sub.id, { u: clamp01(u), v: ALIGN_V.subagent });
+    });
+  }
+  return slots;
+}
+
+/** Steer every (non-held) entity toward its align-mode slot. */
+function applyAlignment() {
+  const slots = alignSlots();
+  for (const ent of entities.values()) {
+    if (ent.held) continue;
+    const slot = slots.get(ent.id);
+    if (!slot) continue;
+    ent.tu = slot.u;
+    ent.tv = slot.v;
+    if (Math.hypot(ent.u - slot.u, ent.v - slot.v) > 0.012 && ent.mode !== "stroll") {
+      ent.mode = "stroll";
+      applyAnim(ent);
+    }
+  }
+}
+
+/** The align toggle button, overlaid on the stage's top-right (GF-127). */
+function ensureAlignButton(stage) {
+  let btn = stage.querySelector(".align-toggle");
+  if (!btn) {
+    btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "align-toggle";
+    btn.textContent = "Align";
+    btn.title = "Line up by hierarchy (Claude Code → sessions → sub-agents)";
+    btn.addEventListener("click", () => {
+      setAligned(!alignedMode);
+      btn.classList.toggle("active", alignedMode);
+      btn.setAttribute("aria-pressed", alignedMode ? "true" : "false");
+      ensureLoop();
+    });
+    stage.appendChild(btn);
+  }
+  btn.classList.toggle("active", alignedMode);
+  btn.setAttribute("aria-pressed", alignedMode ? "true" : "false");
+}
+
 const reducedMotion =
   typeof matchMedia === "function"
     ? matchMedia("(prefers-reduced-motion: reduce)")
@@ -311,8 +426,10 @@ function stepBehavior(ent, dt) {
   if (ent.mode === "act") {
     ent.modeLeft -= dt;
     if (ent.modeLeft <= 0) {
-      if (!b.roam) {
-        // Needs the user: keep acting in place until the state changes.
+      if (!b.roam || alignedMode) {
+        // Needs the user — or the stage is lined up (GF-127): keep acting in
+        // place. In align mode, applyAlignment() re-targets the slot if the
+        // entity drifts, so no roaming target is picked here.
         ent.modeLeft = b.act;
         return;
       }
@@ -525,8 +642,12 @@ function tick(now) {
   dims.density = densityScale();
 
   if (!reducedMotion.matches) {
+    // Align mode (GF-127): steer everyone toward their hierarchy slot and skip
+    // the separation pass — the rows are already collision-free, and pushing
+    // entities apart would ruin the line-up.
+    if (alignedMode) applyAlignment();
     for (const ent of entities.values()) stepBehavior(ent, dt);
-    separate(dims);
+    if (!alignedMode) separate(dims);
   }
   applyTransforms(dims);
   drawLeashes(dims);
@@ -585,6 +706,7 @@ export function renderAnimMode(stage, sessions, onSelect) {
   onSelectFn = onSelect;
   const list = Array.isArray(sessions) ? sessions : [];
   harnessSvg = ensureHarnessLayer(stage);
+  ensureAlignButton(stage);
 
   if (!resizeObserver && typeof ResizeObserver !== "undefined") {
     // Positions are relative (u,v) so a resize only needs a reprojection — the
