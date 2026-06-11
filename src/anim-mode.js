@@ -440,8 +440,10 @@ function stepBehavior(ent, dt) {
     return;
   }
 
-  // stroll: walk toward the target.
-  const speed = ent.role === "root" ? ROOT_SPEED : b.speed;
+  // stroll: walk toward the target. In align mode everyone hustles at twice
+  // their stroll speed so toggling the line-up snaps into rows quickly.
+  const base = ent.role === "root" ? ROOT_SPEED : b.speed;
+  const speed = alignedMode ? base * 2 : base;
   const du = ent.tu - ent.u;
   const dv = ent.tv - ent.v;
   const dist = Math.hypot(du, dv);
