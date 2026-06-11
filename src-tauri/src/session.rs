@@ -703,9 +703,16 @@ impl SessionManager {
             .collect()
     }
 
-    /// Transition any `Done` session that has been quiet for longer than
-    /// `idle_after` into `Idle`. Returns the ids that changed. Intended to be
-    /// called periodically by a timer (ST-3).
+    /// Transition neglected sessions into `Idle` after `idle_after` of quiet:
+    /// `Done` sessions (ST-3), and — GF-133 — `Waiting` sessions whose wait is
+    /// the **idle "come back" ping** (`idle_prompt`), which Claude Code fires
+    /// when a finished turn sits unanswered. That ping previously pinned the
+    /// session in Waiting forever, indistinguishable from a permission prompt,
+    /// masking completion; it now relaxes to Idle once the user clearly isn't
+    /// coming right back. A *permission* wait — or a wait of unknown kind
+    /// (pre-GF-133 hooks carry no kind, and a permission prompt must never be
+    /// silently downgraded) — never decays. Returns the changed ids; called
+    /// periodically by a timer.
     pub fn tick_idle_at(&self, now: Instant) -> Vec<String> {
         let mut changed = Vec::new();
         // GF-130: a session whose sub-agents are still running is not neglected
@@ -717,8 +724,15 @@ impl SessionManager {
             if busy_parents.contains(&session.id) {
                 continue;
             }
+            let neglected = match session.state {
+                SessionState::Done => true,
+                SessionState::Waiting => {
+                    session.waiting_kind.as_deref() == Some("idle_prompt")
+                }
+                _ => false,
+            };
             let elapsed = now.saturating_duration_since(session.last_activity);
-            if session.state == SessionState::Done && elapsed >= self.idle_after {
+            if neglected && elapsed >= self.idle_after {
                 session.state = SessionState::Idle;
                 changed.push(session.id.clone());
             }
@@ -1777,6 +1791,67 @@ mod tests {
         m.handle_event_at(&event("s", "PreToolUse"), t0);
         let s = m.snapshot().into_iter().find(|s| s.id == "s").unwrap();
         assert!(!s.pending && !s.inferred, "first hook confirms the session");
+    }
+
+    // --- GF-133: idle "come back" ping must not pin Waiting forever ---
+
+    /// The reported scenario: a task finishes (Stop → Done), the user steps
+    /// away, Claude Code fires its idle notification — the session showed an
+    /// urgent permission-style Waiting indefinitely. With the kind now known
+    /// (idle_prompt via the hook URL), the wait relaxes to Idle after the
+    /// neglect window instead of masking completion forever.
+    #[test]
+    fn done_then_idle_ping_decays_to_idle() {
+        let m = SessionManager::with_idle_after(Duration::from_secs(60));
+        let t0 = Instant::now();
+        m.handle_event_at(&event("s", "Stop"), t0);
+        assert_eq!(m.snapshot()[0].state, SessionState::Done);
+
+        let ping = event_json(serde_json::json!({
+            "session_id": "s", "hook_event_name": "Notification",
+            "notification_type": "idle_prompt"
+        }));
+        let t1 = t0 + Duration::from_secs(60);
+        m.handle_event_at(&ping, t1);
+        let s = &m.snapshot()[0];
+        assert_eq!(s.state, SessionState::Waiting, "the ping still surfaces as Waiting");
+        assert_eq!(s.summary, "waiting for your next prompt", "and is labeled as idle, not permission");
+
+        assert!(m.tick_idle_at(t1 + Duration::from_secs(59)).is_empty(), "not before the window");
+        assert_eq!(m.tick_idle_at(t1 + Duration::from_secs(61)), vec!["s".to_string()]);
+        assert_eq!(m.snapshot()[0].state, SessionState::Idle, "idle wait relaxed to Idle");
+    }
+
+    #[test]
+    fn permission_wait_never_decays() {
+        let m = SessionManager::with_idle_after(Duration::from_secs(60));
+        let t0 = Instant::now();
+        m.handle_event_at(
+            &event_json(serde_json::json!({
+                "session_id": "s", "hook_event_name": "Notification",
+                "notification_type": "permission_prompt"
+            })),
+            t0,
+        );
+        assert!(m.tick_idle_at(t0 + Duration::from_secs(3600)).is_empty());
+        assert_eq!(m.snapshot()[0].state, SessionState::Waiting, "permission keeps needing the user");
+    }
+
+    /// Pre-GF-133 hooks (and any future unknown kind) carry no
+    /// `notification_type`: the wait COULD be a permission prompt, so it must
+    /// never be silently downgraded.
+    #[test]
+    fn unknown_kind_wait_never_decays() {
+        let m = SessionManager::with_idle_after(Duration::from_secs(60));
+        let t0 = Instant::now();
+        m.handle_event_at(
+            &event_json(serde_json::json!({
+                "session_id": "s", "hook_event_name": "Notification"
+            })),
+            t0,
+        );
+        assert!(m.tick_idle_at(t0 + Duration::from_secs(3600)).is_empty());
+        assert_eq!(m.snapshot()[0].state, SessionState::Waiting);
     }
 
     #[test]
