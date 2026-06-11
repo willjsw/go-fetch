@@ -142,6 +142,34 @@ body {
   stroke-linecap: round;
 }
 
+/* Align toggle (GF-127): overlaid on the stage's top-right. Free roam by
+   default; when active, the cast lines up in hierarchy rows. */
+.align-toggle {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 6;
+  padding: 3px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--muted);
+  font: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+.align-toggle:hover {
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--accent);
+}
+.align-toggle.active {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.3);
+  color: var(--accent);
+}
+
 /* A character node is absolutely placed by its FEET (bottom-center): left/top
    is the projected floor point, so depth ordering and the ground shadow read
    naturally (GF-116). */
