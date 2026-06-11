@@ -1226,3 +1226,45 @@ body.gf-paused .agent-dot {
     transform: scale(0.8);
   }
 }
+
+/* ---- Done bounce (GF-137) ----
+   Every character pops up and down while showing off its prize: the sprite
+   hops while the ground shadow squashes in counterphase, selling the lift.
+   Pure CSS on top of the frame-based done motions — applies to every sheet
+   uniformly (stage nodes, cards, and the detail popover). Held (dragged)
+   characters don't bounce; reduced-motion gets the static frames only. */
+@media (prefers-reduced-motion: no-preference) {
+  .anim-node[data-state="done"]:not(.held) .char-wrap .spr,
+  .session-card.state-done .char .spr,
+  .detail-popover.state-done .detail-head .char .spr {
+    animation: gf-done-bounce 0.55s ease-in-out infinite;
+  }
+  .anim-node[data-state="done"]:not(.held) .char-wrap::after {
+    animation: gf-done-shadow 0.55s ease-in-out infinite;
+  }
+}
+body.gf-paused .anim-node .char-wrap .spr,
+body.gf-paused .anim-node .char-wrap::after,
+body.gf-paused .session-card .char .spr {
+  animation-play-state: paused;
+}
+@keyframes gf-done-bounce {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-22%);
+  }
+}
+@keyframes gf-done-shadow {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(0.78);
+    opacity: 0.6;
+  }
+}
