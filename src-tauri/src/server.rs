@@ -19,7 +19,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::{
-    extract::{rejection::JsonRejection, State},
+    extract::{rejection::JsonRejection, Query, State},
     http::StatusCode,
     routing::{get, post},
     Json, Router,
@@ -133,12 +133,28 @@ async fn health() -> StatusCode {
 /// Returns `200 OK` (empty body) for a well-formed payload and `400 Bad Request`
 /// for malformed JSON. Both are non-blocking on the hook side (verified: non-2xx
 /// is a non-blocking error), so neither can stall the Claude Code session.
+///
+/// GF-133: the real `Notification` body carries no `notification_type` — the
+/// kind is selected by the hook **matcher** only. Since GoFetch registers one
+/// hook per matcher, each hook's URL carries the kind as a query parameter
+/// (`/event?notification_type=permission_prompt` / `idle_prompt`), which is
+/// merged into the event here. Without it, an idle "waiting for your next
+/// prompt" ping was indistinguishable from a permission prompt and pinned a
+/// finished session in Waiting forever. A body-supplied field still wins
+/// (forward-compat); hooks registered before GF-133 simply omit the parameter
+/// and keep the old generic behavior.
 async fn handle_event(
     State(state): State<AppState>,
+    Query(params): Query<HashMap<String, String>>,
     payload: Result<Json<HookEvent>, JsonRejection>,
 ) -> StatusCode {
     match payload {
-        Ok(Json(event)) => {
+        Ok(Json(mut event)) => {
+            if event.notification_type.is_none() {
+                if let Some(kind) = params.get("notification_type") {
+                    event.notification_type = Some(kind.clone());
+                }
+            }
             // Feed the session state machine (Task 4) and refresh the UI (Task 5).
             // Any outcome except `Ignored` changed the tracked set (state change,
             // creation, or removal) and warrants a widget refresh.
@@ -300,6 +316,48 @@ mod tests {
             .unwrap();
         let response = test_router().oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    /// GF-133: the kind-tagged hook URL fills the missing `notification_type`,
+    /// so an idle "come back" ping is distinguishable from a permission prompt
+    /// even though the body carries no type.
+    #[tokio::test]
+    async fn query_param_fills_notification_kind() {
+        let manager = SessionManager::new();
+        let notify: UpdateNotifier = Arc::new(|_: &str| {});
+        let app = router(manager.clone(), notify);
+        let body = r#"{"session_id":"s","hook_event_name":"Notification","message":"Claude is waiting for your input"}"#;
+        let req = Request::builder()
+            .method("POST")
+            .uri("/event?notification_type=idle_prompt")
+            .header("content-type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+        assert_eq!(app.oneshot(req).await.unwrap().status(), StatusCode::OK);
+        let snap = manager.snapshot();
+        assert_eq!(snap[0].state, crate::session::SessionState::Waiting);
+        assert_eq!(
+            snap[0].summary, "waiting for your next prompt",
+            "kind from the URL labels the wait as idle, not permission"
+        );
+    }
+
+    /// A body-supplied `notification_type` wins over the URL parameter
+    /// (forward-compat if Claude Code ever echoes the type into the payload).
+    #[tokio::test]
+    async fn body_notification_kind_wins_over_query() {
+        let manager = SessionManager::new();
+        let notify: UpdateNotifier = Arc::new(|_: &str| {});
+        let app = router(manager.clone(), notify);
+        let body = r#"{"session_id":"s","hook_event_name":"Notification","notification_type":"permission_prompt"}"#;
+        let req = Request::builder()
+            .method("POST")
+            .uri("/event?notification_type=idle_prompt")
+            .header("content-type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+        assert_eq!(app.oneshot(req).await.unwrap().status(), StatusCode::OK);
+        assert_eq!(manager.snapshot()[0].summary, "waiting for permission");
     }
 
     /// Malformed JSON gets a non-blocking 400 (never a blocking decision).

@@ -62,13 +62,31 @@ fn gofetch_handler(port: u16) -> Value {
     })
 }
 
-/// Is this handler object one GoFetch manages?
+/// The GoFetch handler for one `Notification` matcher group (GF-133). The real
+/// Notification body carries no `notification_type` — only the matcher knows
+/// which kind fired — so each matcher group's URL encodes the kind as a query
+/// parameter, and the server merges it back into the event. This is what lets
+/// GoFetch tell a permission prompt apart from an idle "come back" ping.
+fn gofetch_notification_handler(port: u16, kind: &str) -> Value {
+    json!({
+        "type": "http",
+        "url": format!("http://127.0.0.1:{port}/event?notification_type={kind}"),
+        "timeout": 5
+    })
+}
+
+/// Is this handler object one GoFetch manages? Matches the `/event` endpoint
+/// with or without a query string (GF-133 added `?notification_type=…` to the
+/// Notification handlers), so unregister/re-register cleans both forms.
 fn is_gofetch_handler(handler: &Value) -> bool {
     handler.get("type").and_then(Value::as_str) == Some("http")
         && handler
             .get("url")
             .and_then(Value::as_str)
-            .is_some_and(|u| u.ends_with("/event") && (u.contains("127.0.0.1") || u.contains("localhost")))
+            .is_some_and(|u| {
+                let path = u.split('?').next().unwrap_or(u);
+                path.ends_with("/event") && (u.contains("127.0.0.1") || u.contains("localhost"))
+            })
 }
 
 /// Ensure `settings.hooks` exists as an object and return it mutably.
@@ -110,9 +128,20 @@ pub fn apply_register(settings: &mut Value, port: u16) {
     let handler = gofetch_handler(port);
     let hooks = hooks_object(settings);
 
-    // Notification: separate groups so each waiting type is filtered precisely.
-    push_group(hooks, "Notification", Some("permission_prompt"), &handler);
-    push_group(hooks, "Notification", Some("idle_prompt"), &handler);
+    // Notification: separate groups so each waiting type is filtered precisely,
+    // each with its kind encoded in the URL (GF-133) since the body omits it.
+    push_group(
+        hooks,
+        "Notification",
+        Some("permission_prompt"),
+        &gofetch_notification_handler(port, "permission_prompt"),
+    );
+    push_group(
+        hooks,
+        "Notification",
+        Some("idle_prompt"),
+        &gofetch_notification_handler(port, "idle_prompt"),
+    );
 
     // Stop family + tool events + UserPromptSubmit: no matcher (fire on all).
     for event in TOOL_AND_LIFECYCLE_EVENTS {
@@ -253,12 +282,24 @@ mod tests {
         assert!(matchers.contains(&"permission_prompt"));
         assert!(matchers.contains(&"idle_prompt"));
 
-        // Handler shape: http + url + timeout, NO async (FIX-2).
-        let handler = &notif[0]["hooks"][0];
-        assert_eq!(handler["type"], "http");
-        assert_eq!(handler["url"], "http://127.0.0.1:31337/event");
-        assert_eq!(handler["timeout"], 5);
-        assert!(handler.get("async").is_none());
+        // Handler shape: http + url + timeout, NO async (FIX-2). Notification
+        // handlers carry their matcher's kind as a query parameter (GF-133)
+        // because the hook body omits it.
+        for group in notif.as_array().unwrap() {
+            let handler = &group["hooks"][0];
+            assert_eq!(handler["type"], "http");
+            let kind = group["matcher"].as_str().unwrap();
+            assert_eq!(
+                handler["url"],
+                format!("http://127.0.0.1:31337/event?notification_type={kind}")
+            );
+            assert_eq!(handler["timeout"], 5);
+            assert!(handler.get("async").is_none());
+            assert!(is_gofetch_handler(handler), "query form must be recognized as ours");
+        }
+        // Plain (non-Notification) events keep the bare /event URL.
+        let stop_handler = &settings["hooks"]["Stop"][0]["hooks"][0];
+        assert_eq!(stop_handler["url"], "http://127.0.0.1:31337/event");
 
         for event in [
             "SessionStart",
@@ -304,6 +345,32 @@ mod tests {
         assert!(post.iter().any(|g| {
             g["hooks"].as_array().map_or(false, |hs| hs.iter().any(is_gofetch_handler))
         }));
+    }
+
+    /// GF-133 migration: entries written by an older GoFetch (bare `/event`
+    /// Notification URLs, no query) are still recognized as ours, so a
+    /// re-register replaces them instead of stacking a second handler.
+    #[test]
+    fn re_register_replaces_pre_gf133_notification_entries() {
+        let mut settings = json!({
+            "hooks": {
+                "Notification": [
+                    { "matcher": "permission_prompt", "hooks": [
+                        { "type": "http", "url": "http://127.0.0.1:31337/event", "timeout": 5 }
+                    ]},
+                    { "matcher": "idle_prompt", "hooks": [
+                        { "type": "http", "url": "http://127.0.0.1:31337/event", "timeout": 5 }
+                    ]}
+                ]
+            }
+        });
+        apply_register(&mut settings, 31337);
+        let notif = settings["hooks"]["Notification"].as_array().unwrap();
+        assert_eq!(notif.len(), 2, "old bare-URL entries replaced, not duplicated");
+        for group in notif {
+            let url = group["hooks"][0]["url"].as_str().unwrap();
+            assert!(url.contains("?notification_type="), "migrated to kind-tagged URL: {url}");
+        }
     }
 
     #[test]
