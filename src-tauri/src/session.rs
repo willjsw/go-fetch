@@ -527,8 +527,21 @@ impl SessionManager {
         // the session is not actually finished: defer `Done`, stay `Working`,
         // and promote when the last child stops. Checked before taking the
         // session lock (reads the separate sub-agent map).
-        let defer_done =
-            mapped == SessionState::Done && self.has_live_subagents(&event.session_id);
+        let live_children = self.has_live_subagents(&event.session_id);
+        let defer_done = mapped == SessionState::Done && live_children;
+        // GF-136: the idle "come back" ping fires whenever a turn sits
+        // unanswered — including while delegated sub-agents are still working.
+        // Pulling the session out of `Working` then misreads "still working
+        // through its children" as "waiting for you"; the user is informed at
+        // the true finish by the deferred `Done` (GF-130). Drop the ping.
+        // Permission prompts — and unknown kinds, which could be permission —
+        // still win: those block real work.
+        if mapped == SessionState::Waiting
+            && live_children
+            && event.notification_type.as_deref() == Some("idle_prompt")
+        {
+            return EventOutcome::Ignored;
+        }
         let mut sessions = self.sessions.write().expect("session lock poisoned");
         let session = sessions
             .entry(event.session_id.clone())
@@ -1852,6 +1865,70 @@ mod tests {
         );
         assert!(m.tick_idle_at(t0 + Duration::from_secs(3600)).is_empty());
         assert_eq!(m.snapshot()[0].state, SessionState::Waiting);
+    }
+
+    // --- GF-136: idle ping must not override a parent with running children ---
+
+    /// Field report: turn ended (Done deferred, "waiting for sub-agents to
+    /// finish"), then the idle ping pulled the parent into Waiting while its
+    /// child was still working. The ping is dropped while children live; the
+    /// deferred Done still lands when the last child stops.
+    #[test]
+    fn idle_ping_ignored_while_subagents_run() {
+        let m = SessionManager::new();
+        let t0 = Instant::now();
+        m.handle_event_at(&event("p", "PreToolUse"), t0);
+        m.handle_event_at(&sub_event("p", "a1", "SubagentStart"), t0);
+        m.handle_event_at(&event("p", "Stop"), t0); // deferred Done (GF-130)
+
+        let ping = event_json(serde_json::json!({
+            "session_id": "p", "hook_event_name": "Notification",
+            "notification_type": "idle_prompt"
+        }));
+        assert_eq!(
+            m.handle_event_at(&ping, t0 + Duration::from_secs(60)),
+            EventOutcome::Ignored,
+            "idle ping is dropped while a child still runs"
+        );
+        let parent = m.snapshot().into_iter().find(|s| s.id == "p").unwrap();
+        assert_eq!(parent.state, SessionState::Working);
+        assert_eq!(parent.summary, "waiting for sub-agents to finish");
+
+        // The deferred completion still lands when the last child stops.
+        m.handle_event_at(&sub_event("p", "a1", "SubagentStop"), t0 + Duration::from_secs(90));
+        let parent = m.snapshot().into_iter().find(|s| s.id == "p").unwrap();
+        assert_eq!(parent.state, SessionState::Done);
+    }
+
+    /// Permission prompts (and kind-less waits, which could be permission)
+    /// still interrupt a delegating parent — those block real work.
+    #[test]
+    fn permission_ping_still_wins_with_running_subagents() {
+        let m = SessionManager::new();
+        let t0 = Instant::now();
+        m.handle_event_at(&event("p", "PreToolUse"), t0);
+        m.handle_event_at(&sub_event("p", "a1", "SubagentStart"), t0);
+
+        let perm = event_json(serde_json::json!({
+            "session_id": "p", "hook_event_name": "Notification",
+            "notification_type": "permission_prompt"
+        }));
+        assert_eq!(
+            m.handle_event_at(&perm, t0),
+            EventOutcome::Changed(SessionState::Waiting)
+        );
+
+        let m2 = SessionManager::new();
+        m2.handle_event_at(&event("p", "PreToolUse"), t0);
+        m2.handle_event_at(&sub_event("p", "a1", "SubagentStart"), t0);
+        let unknown = event_json(serde_json::json!({
+            "session_id": "p", "hook_event_name": "Notification"
+        }));
+        assert_eq!(
+            m2.handle_event_at(&unknown, t0),
+            EventOutcome::Changed(SessionState::Waiting),
+            "kind-less wait could be permission — must not be dropped"
+        );
     }
 
     #[test]
