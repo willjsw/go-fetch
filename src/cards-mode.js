@@ -31,7 +31,7 @@ function makeCard(session, onSelect) {
     </div>`;
   card.addEventListener("click", () => onSelect(session.id));
   const sprite = new SpriteAnimator(card.querySelector(".char"), activeSheet());
-  return { el: card, sprite, state: null };
+  return { el: card, sprite, state: null, inactive: undefined };
 }
 
 // Character switch (GF-118): drop every card; the next render rebuilds them
@@ -50,7 +50,14 @@ function patchCard(entry, session) {
   if (entry.state !== state) {
     entry.state = state;
     entry.el.className = `session-card state-${state}`;
+    entry.inactive = undefined; // className reset dropped the modifier; re-apply
     entry.sprite.setAnim(activeSheet().stateAnims[state] || "idle", STATE_COLOR[state]);
+  }
+  // Visual-only "inactive" hint on a Working session (interrupt / IDE-permission
+  // blind spot). Toggled independently of state changes; state stays `working`.
+  if (entry.inactive !== session.inactive) {
+    entry.inactive = session.inactive;
+    entry.el.classList.toggle("inactive", !!session.inactive);
   }
   const set = (sel, text) => {
     const el = entry.el.querySelector(sel);

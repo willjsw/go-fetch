@@ -391,6 +391,22 @@ body {
 .state-pending { border-left-color: var(--pending); }
 .state-pending .state-label { color: var(--pending); }
 
+/* Visual-only "inactive" hint: a Working session that has emitted no hook events
+   for a while — a possible interrupt or an IDE permission prompt we never saw
+   (see README "Known limitations"). Soft, never an alarm: dimmed, dashed border,
+   a 💤 after the label. No OS notification fires — the state stays Working. */
+.session-card.inactive {
+  border-left-style: dashed;
+  opacity: 0.7;
+}
+.session-card.inactive .char {
+  filter: grayscale(0.6);
+}
+.session-card.inactive .state-label::after {
+  content: " 💤";
+  font-weight: 400;
+}
+
 /* ---- Detail popover (DV-1 / DV-3) ---- */
 .detail-backdrop {
   position: fixed;
