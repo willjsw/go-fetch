@@ -55,7 +55,7 @@ wasn't watching the terminal?"*
 
   | Character | Working | Waiting | Error | Done |
   |---|---|---|---|---|
-  | Dog (retriever) | digs the ground | spins in place | growls | fetches a bone |
+  | Dog (retriever) | digs the ground | spins in place | growls | fetches a small AI character |
   | Robot | transforms into a UFO and flies | radar sweep | smoke + sparks | thumbs-up |
   | Penguin | pecks ice, wings beating | spins | angry flapping | brings a fish |
   | Terminator | fires a shotgun from his bike | head scan | backfire | thumbs-up |
@@ -149,4 +149,4 @@ into `src/sprites/` and registering it in `src/sprites/index.js`.
 
 ## License
 
-TBD.
+[MIT](LICENSE) © 2026 Sunwoo Jung.
