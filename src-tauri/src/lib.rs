@@ -226,6 +226,13 @@ pub fn run() {
                     for id in i_manager.tick_idle() {
                         (i_notify)(&id);
                     }
+                    // Flag `Working` sessions gone quiet as `inactive` — a
+                    // visual-only hint for the interrupt / IDE-permission blind
+                    // spots (no hook fires for those). The notifier refreshes the
+                    // widget; the state stays `Working`, so no OS notification.
+                    for id in i_manager.tick_stale_working() {
+                        (i_notify)(&id);
+                    }
                     // SL-3: evict sessions stale past the timeout (missed
                     // SessionEnd safety net). The notifier sees them gone from
                     // the snapshot and refreshes + clears dedup.
