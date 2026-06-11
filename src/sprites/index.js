@@ -16,7 +16,7 @@ export const CHARACTERS = { dog, robot, penguin, terminator, cat, jensen, dust }
 
 /** Display labels for the settings picker, in menu order. */
 export const CHARACTER_LABELS = [
-  ["dog", "Dog"],
+  ["dog", "Retriever"],
   ["robot", "Robot"],
   ["penguin", "Penguin"],
   ["terminator", "Terminator"],
