@@ -29,34 +29,41 @@ function makeCard(session, onSelect) {
       </div>
       <div class="elapsed"></div>
     </div>
-    <div class="agent-dots" aria-hidden="true" hidden></div>`;
+    <div class="agent-stack" aria-hidden="true" hidden>
+      <div class="agent-dots"></div>
+      <div class="agent-count"></div>
+    </div>`;
   card.addEventListener("click", () => onSelect(session.id));
   const sprite = new SpriteAnimator(card.querySelector(".char"), activeSheet());
   return { el: card, sprite, state: null, inactive: undefined, agents: 0 };
 }
 
 /** Cards can't nest sub-agent characters like the stage does, so each card
- *  shows one small green dot per RUNNING sub-agent instead (GF-129). The dots
- *  sit in a fixed-width two-column grid on the card's right edge so any count
- *  keeps the card layout intact; beyond the cap a "+N" takes the last cell.
- *  Counts come from the live snapshot — a sub-agent node exists exactly while
- *  it runs (removed on SubagentStop/eviction) — so this is real-time. */
+ *  shows one small green dot per RUNNING sub-agent (GF-129) with the exact
+ *  count as text right below ("8 agents", GF-139). The dot grid is capped so
+ *  any count keeps the card layout intact — the text carries the precise
+ *  number. Counts come from the live snapshot — a sub-agent node exists
+ *  exactly while it runs (removed on SubagentStop/eviction) — so this is
+ *  real-time. */
 const MAX_AGENT_DOTS = 6;
 function patchAgentDots(entry, count) {
   if (entry.agents === count) return;
   entry.agents = count;
-  const box = entry.el.querySelector(".agent-dots");
-  if (!box) return;
-  box.hidden = count === 0;
+  const stack = entry.el.querySelector(".agent-stack");
+  if (!stack) return;
+  stack.hidden = count === 0;
+  const dotsBox = stack.querySelector(".agent-dots");
+  const countBox = stack.querySelector(".agent-count");
   if (count === 0) {
-    box.innerHTML = "";
+    dotsBox.innerHTML = "";
+    countBox.textContent = "";
     return;
   }
   const dots = Math.min(count, MAX_AGENT_DOTS);
   let html = "";
   for (let i = 0; i < dots; i++) html += '<span class="agent-dot"></span>';
-  if (count > MAX_AGENT_DOTS) html += `<span class="agent-more">+${count - MAX_AGENT_DOTS}</span>`;
-  box.innerHTML = html;
+  dotsBox.innerHTML = html;
+  countBox.textContent = `${count} agent${count === 1 ? "" : "s"}`;
   entry.el.title = `Click for details — ${count} sub-agent${count === 1 ? "" : "s"} running`;
 }
 

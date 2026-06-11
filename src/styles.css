@@ -1171,22 +1171,35 @@ body.gf-paused .stage-ambient * {
   }
 }
 
-/* ---- Card sub-agent dots (GF-129) ----
-   One green dot per running sub-agent, on the card's right edge. A fixed
-   two-column grid keeps any count from distorting the card layout; past the
-   cap the last cell shows "+N". Dots pulse softly to read as "running". */
-.agent-dots {
+/* ---- Card sub-agent dots + count (GF-129 / GF-139) ----
+   One green dot per running sub-agent on the card's right edge, with the
+   exact count as text right below ("8 agents"). The dot grid is capped so any
+   count keeps the card layout intact; the text carries the precise number, so
+   no "+N" cell is needed. Dots pulse softly to read as "running". */
+.agent-stack {
   flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  align-self: center;
+  margin-left: 4px;
+}
+.agent-stack[hidden] {
+  display: none;
+}
+.agent-count {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--working);
+  white-space: nowrap;
+}
+.agent-dots {
   display: grid;
   grid-template-columns: repeat(2, 7px);
   gap: 3px;
   align-content: center;
   justify-items: center;
-  align-self: center;
-  margin-left: 4px;
-}
-.agent-dots[hidden] {
-  display: none;
 }
 .agent-dot {
   width: 6px;
@@ -1208,12 +1221,6 @@ body.gf-paused .stage-ambient * {
 }
 body.gf-paused .agent-dot {
   animation-play-state: paused;
-}
-.agent-more {
-  grid-column: 1 / -1;
-  font-size: 9px;
-  font-weight: 600;
-  color: var(--working);
 }
 @keyframes gf-dot-pulse {
   0%,
