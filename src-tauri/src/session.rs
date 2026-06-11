@@ -124,6 +124,14 @@ pub struct Session {
     /// real hook event clears it. The five-state engine is unchanged: `pending`
     /// is a display-layer flag layered on a non-notifiable underlying state.
     pub pending: bool,
+    /// GF-131: this `pending` session's state was inferred from the pre-existing
+    /// poll's `status` field (`busy` → Working / `idle` → Idle) rather than
+    /// confirmed by a hook. Display-only: `pending` stays set, so notifications
+    /// remain suppressed (SL-5) — both inferred states are non-notifiable anyway
+    /// — but the widget can show the live state instead of the neutral "?".
+    /// Cleared (with `pending`) by the first real hook event.
+    #[serde(default)]
+    pub inferred: bool,
     /// Visual-only soft flag: a `Working` session that has emitted no hook event
     /// for a while. Because Claude Code fires no hook on user interrupt, and the
     /// VS Code extension fires no permission `Notification`, such a session would
@@ -186,6 +194,7 @@ impl Session {
             idle_seconds: 0,
             summary: String::new(),
             pending: false,
+            inferred: false,
             inactive: false,
             mid_tool: false,
             awaiting_subagents: false,
@@ -200,8 +209,13 @@ impl Session {
     /// generation from already-captured fields — does no I/O and sends nothing.
     pub fn generate_summary(&self) -> String {
         if self.pending {
-            // State not yet confirmed (just started / pre-existing) — SL-5.
-            return "detected — awaiting activity".to_string();
+            // State not yet confirmed by a hook (just started / pre-existing) —
+            // SL-5. With a poll-inferred state (GF-131) say what we observed.
+            return match (self.inferred, self.state) {
+                (true, SessionState::Working) => "working (via poll)".to_string(),
+                (true, SessionState::Idle) => "idle (via poll)".to_string(),
+                _ => "detected — awaiting activity".to_string(),
+            };
         }
         match self.state {
             // GF-130: the turn ended but background sub-agents are still running
@@ -522,9 +536,11 @@ impl SessionManager {
 
         session.last_activity = now;
         session.last_seen = now;
-        // A real activity event confirms the session's state (clears SL-5 pending)
-        // and clears the inactivity hint — there was activity after all.
+        // A real activity event confirms the session's state (clears SL-5 pending
+        // and any poll-inferred placeholder) and clears the inactivity hint —
+        // there was activity after all.
         session.pending = false;
+        session.inferred = false;
         session.inactive = false;
         // Reset mid-tool by default; the Working arm re-arms it for `PreToolUse`.
         session.mid_tool = false;
@@ -849,6 +865,36 @@ impl SessionManager {
         session.state = SessionState::Idle; // neutral, non-notifiable
         sessions.insert(session_id.to_string(), session);
         true
+    }
+
+    /// GF-131: refine a still-`pending` session's display state from the poll's
+    /// `status` field (`busy` → Working, `idle` → Idle; anything else ignored —
+    /// the interface is research-preview, F7/F9). **Hook-first:** a session
+    /// confirmed by a hook (`pending == false`) is never touched, and `pending`
+    /// stays set so notifications remain suppressed (SL-5) — both inferred
+    /// states are non-notifiable anyway. `busy` also refreshes `last_activity`
+    /// (the session demonstrably is active right now). Returns whether the
+    /// visible state changed (caller refreshes the widget).
+    pub fn update_pending_status(&self, session_id: &str, status: &str, now: Instant) -> bool {
+        let target = match status {
+            "busy" => SessionState::Working,
+            "idle" => SessionState::Idle,
+            _ => return false,
+        };
+        let mut sessions = self.sessions.write().expect("session lock poisoned");
+        let Some(session) = sessions.get_mut(session_id) else {
+            return false;
+        };
+        if !session.pending {
+            return false; // hook-confirmed state wins (SL-5)
+        }
+        let changed = !session.inferred || session.state != target;
+        session.inferred = true;
+        session.state = target;
+        if target == SessionState::Working {
+            session.last_activity = now;
+        }
+        changed
     }
 
     /// Refresh a tracked session's liveness timestamp because the pre-existing
@@ -1685,6 +1731,52 @@ mod tests {
             m.tick_stale_working_at(t0 + Duration::from_secs(1000)).is_empty(),
             "a parent with a live child is delegating, not interrupted"
         );
+    }
+
+    // --- GF-131: poll `status` refines pending (hook-blind) sessions ---
+
+    #[test]
+    fn poll_status_refines_pending_session() {
+        let m = SessionManager::new();
+        let t0 = Instant::now();
+        assert!(m.seed_pending("s", Some("/x/proj".into()), t0));
+
+        assert!(m.update_pending_status("s", "busy", t0), "busy → visible change");
+        let s = m.snapshot().into_iter().find(|s| s.id == "s").unwrap();
+        assert_eq!(s.state, SessionState::Working);
+        assert!(s.pending, "still unconfirmed — notifications stay suppressed (SL-5)");
+        assert!(s.inferred);
+        assert_eq!(s.summary, "working (via poll)");
+
+        assert!(!m.update_pending_status("s", "busy", t0), "same status → no churn");
+        assert!(m.update_pending_status("s", "idle", t0), "status flip → change");
+        let s = m.snapshot().into_iter().find(|s| s.id == "s").unwrap();
+        assert_eq!(s.state, SessionState::Idle);
+        assert_eq!(s.summary, "idle (via poll)");
+    }
+
+    #[test]
+    fn poll_status_never_touches_hook_confirmed_sessions() {
+        let m = SessionManager::new();
+        let t0 = Instant::now();
+        m.handle_event_at(&event("s", "Stop"), t0); // hook-confirmed Done
+        assert!(!m.update_pending_status("s", "busy", t0), "hook state wins (SL-5)");
+        assert_eq!(m.snapshot()[0].state, SessionState::Done);
+        // Unknown / future status strings are ignored outright (F7/F9 drift).
+        assert!(m.seed_pending("p", None, t0));
+        assert!(!m.update_pending_status("p", "zombie", t0));
+        assert!(!m.update_pending_status("missing", "busy", t0));
+    }
+
+    #[test]
+    fn real_hook_clears_inferred_flag() {
+        let m = SessionManager::new();
+        let t0 = Instant::now();
+        assert!(m.seed_pending("s", None, t0));
+        assert!(m.update_pending_status("s", "busy", t0));
+        m.handle_event_at(&event("s", "PreToolUse"), t0);
+        let s = m.snapshot().into_iter().find(|s| s.id == "s").unwrap();
+        assert!(!s.pending && !s.inferred, "first hook confirms the session");
     }
 
     #[test]

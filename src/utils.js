@@ -17,10 +17,13 @@ export const STATE_VISUALS = {
 /**
  * Visual key for a session: a `pending` session (polling-seeded or just
  * started, SL-5) shows the neutral "?" expression regardless of its underlying
- * placeholder state; otherwise the mapped state (fallback `idle`).
+ * placeholder state — unless the poll inferred a live state for it (GF-131:
+ * `inferred`, busy→working / idle→idle), which is shown instead so hook-blind
+ * pre-existing sessions don't sit frozen on "Detecting…". Otherwise the mapped
+ * state (fallback `idle`).
  */
 export function visualKey(session) {
-  if (session && session.pending) return "pending";
+  if (session && session.pending && !session.inferred) return "pending";
   return STATE_VISUALS[session.state] ? session.state : "idle";
 }
 
