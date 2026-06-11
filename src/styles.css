@@ -142,6 +142,34 @@ body {
   stroke-linecap: round;
 }
 
+/* Align toggle (GF-127): overlaid on the stage's top-right. Free roam by
+   default; when active, the cast lines up in hierarchy rows. */
+.align-toggle {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 6;
+  padding: 3px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--muted);
+  font: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+.align-toggle:hover {
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--accent);
+}
+.align-toggle.active {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.3);
+  color: var(--accent);
+}
+
 /* A character node is absolutely placed by its FEET (bottom-center): left/top
    is the projected floor point, so depth ordering and the ground shadow read
    naturally (GF-116). */
@@ -159,9 +187,61 @@ body {
 .anim-node.held {
   cursor: grabbing;
 }
+.char-box {
+  position: relative;
+}
 .char-wrap {
   display: block;
   position: relative;
+}
+
+/* Attention badge (GF-126): a small "!" beside the head for the states the
+   user must not miss — waiting (yellow) and error (red). Anchored to the
+   sprite box, which sits BELOW the thought bubble in the node's flex column,
+   so badge and bubble can never overlap. Hidden for every other state. */
+.attn-badge {
+  display: none;
+  position: absolute;
+  top: 6%;
+  right: -13px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 14px;
+  text-align: center;
+  z-index: 3;
+  pointer-events: none;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+}
+.anim-node[data-state="waiting"] .attn-badge {
+  display: block;
+  background: var(--waiting);
+  color: #1c1c22;
+}
+.anim-node[data-state="error"] .attn-badge {
+  display: block;
+  background: var(--error);
+  color: #fff;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .anim-node[data-state="waiting"] .attn-badge,
+  .anim-node[data-state="error"] .attn-badge {
+    animation: gf-badge-pulse 1s ease-in-out infinite;
+  }
+}
+body.gf-paused .attn-badge {
+  animation-play-state: paused;
+}
+@keyframes gf-badge-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.3);
+  }
 }
 
 /* Soft ground shadow under every character — the cheap cue that sells the
@@ -615,4 +695,583 @@ body {
 }
 .settings-panel .char-select option {
   background: #1c1c22;
+}
+
+/* ---- Stage backgrounds (GF-128, ground-plane redesign GF-135) ----
+   Pure-CSS pixel-flavored scenes, selected in Settings (background-store.js
+   applies a `bg-*` class on #stage). The characters roam everywhere below
+   y≈64px (anim-mode PAD_TOP), so the horizon sits HIGH — a thin sky strip in
+   the top ~12-14% — and everything under it is a receding ground plane:
+   bright, thin shading bands at the horizon that grow taller and darker
+   toward the front, matching the roaming layer's far→near perspective scale.
+   Skylines/mountains are tiny inline-SVG tiles (crispEdges) repeated along
+   the horizon, and dot patterns (stars/bubbles/snow) are tiled
+   radial-gradients — no image assets, no animation cost. */
+.stage[class*="bg-"] {
+  border-radius: 10px;
+}
+
+/* 들판 — sunny field: thin sky strip + sun, then a grass plane fading from
+   pale horizon green to deep foreground green in widening bands. */
+.stage.bg-field {
+  background-image:
+    radial-gradient(circle at 86% 5%, #ffe9a8 0 10px, rgba(255, 233, 168, 0) 11px),
+    linear-gradient(
+      #7ec8e3 0%,
+      #a6dcf1 8%,
+      #cdeef9 12%,
+      #a8de92 12%,
+      #a8de92 18%,
+      #96d47f 18%,
+      #96d47f 26%,
+      #84ca6d 26%,
+      #84ca6d 37%,
+      #71bd5b 37%,
+      #71bd5b 51%,
+      #5fb04b 51%,
+      #5fb04b 69%,
+      #4e9f3c 69%,
+      #4e9f3c 86%,
+      #418f31 86%
+    );
+}
+
+/* 심해 — deep sea: dark blue depth bands + tiled bubble dots. */
+.stage.bg-deepsea {
+  background-image:
+    radial-gradient(circle at 18% 22%, rgba(255, 255, 255, 0.16) 0 1.5px, transparent 2.5px),
+    radial-gradient(circle at 64% 58%, rgba(255, 255, 255, 0.12) 0 2px, transparent 3px),
+    radial-gradient(circle at 86% 12%, rgba(255, 255, 255, 0.1) 0 1px, transparent 2px),
+    radial-gradient(circle at 38% 82%, rgba(255, 255, 255, 0.08) 0 1.5px, transparent 2.5px),
+    linear-gradient(#0b3954 0%, #07304a 35%, #042438 70%, #021826 100%);
+  background-size:
+    130px 130px,
+    170px 170px,
+    110px 110px,
+    150px 150px,
+    100% 100%;
+}
+
+/* 우주 — space: near-black sky + three tiled star layers. */
+.stage.bg-space {
+  background-image:
+    radial-gradient(circle at 22% 28%, rgba(255, 255, 255, 0.9) 0 1px, transparent 1.6px),
+    radial-gradient(circle at 72% 64%, rgba(255, 255, 255, 0.7) 0 1px, transparent 1.6px),
+    radial-gradient(circle at 48% 12%, rgba(173, 196, 255, 0.8) 0 1.4px, transparent 2.2px),
+    radial-gradient(circle at 88% 38%, rgba(255, 226, 173, 0.8) 0 1.2px, transparent 2px),
+    linear-gradient(#0b0820 0%, #0a0726 55%, #05030f 100%);
+  background-size:
+    90px 90px,
+    140px 140px,
+    180px 180px,
+    220px 220px,
+    100% 100%;
+}
+
+/* 도시 — night city: thin night-sky strip with a shrunken skyline silhouette
+   on the horizon, then an asphalt plane (glow-washed far, dark near) with two
+   faint dashed lane lines for road perspective. */
+.stage.bg-city {
+  background-image:
+    radial-gradient(circle at 18% 4%, rgba(255, 255, 255, 0.8) 0 1px, transparent 1.7px),
+    radial-gradient(circle at 52% 7%, rgba(255, 255, 255, 0.55) 0 1px, transparent 1.6px),
+    radial-gradient(circle at 83% 3%, rgba(255, 255, 255, 0.7) 0 1px, transparent 1.7px),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='90' shape-rendering='crispEdges'%3E%3Crect x='0' y='40' width='22' height='50' fill='%230e1322'/%3E%3Crect x='26' y='22' width='18' height='68' fill='%23101728'/%3E%3Crect x='48' y='48' width='16' height='42' fill='%230e1322'/%3E%3Crect x='68' y='30' width='24' height='60' fill='%23121a2e'/%3E%3Crect x='96' y='52' width='14' height='38' fill='%230e1322'/%3E%3Crect x='114' y='36' width='20' height='54' fill='%23101728'/%3E%3Crect x='4' y='46' width='3' height='4' fill='%23f7d774'/%3E%3Crect x='12' y='58' width='3' height='4' fill='%23f7d774'/%3E%3Crect x='30' y='28' width='3' height='4' fill='%23f7d774'/%3E%3Crect x='37' y='40' width='3' height='4' fill='%23ffe9a8'/%3E%3Crect x='52' y='54' width='3' height='4' fill='%23f7d774'/%3E%3Crect x='73' y='38' width='3' height='4' fill='%23ffe9a8'/%3E%3Crect x='82' y='52' width='3' height='4' fill='%23f7d774'/%3E%3Crect x='99' y='60' width='3' height='4' fill='%23f7d774'/%3E%3Crect x='119' y='44' width='3' height='4' fill='%23ffe9a8'/%3E%3Crect x='126' y='62' width='3' height='4' fill='%23f7d774'/%3E%3C/svg%3E"),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.07) 0 12px, transparent 12px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.09) 0 18px, transparent 18px),
+    linear-gradient(
+      #10142a 0%,
+      #232a52 9%,
+      #463357 14%,
+      #515677 14%,
+      #515677 21%,
+      #464a66 21%,
+      #464a66 30%,
+      #3c3f56 30%,
+      #3c3f56 42%,
+      #323447 42%,
+      #323447 57%,
+      #292b3a 57%,
+      #292b3a 75%,
+      #20222e 75%
+    );
+  background-repeat: no-repeat, no-repeat, no-repeat, repeat-x, repeat-x, repeat-x, no-repeat;
+  background-position: 0 0, 0 0, 0 0, left top, left top 38%, left top 74%, center;
+  background-size:
+    100% 100%,
+    100% 100%,
+    100% 100%,
+    auto 14%,
+    46px 2px,
+    72px 3px,
+    100% 100%;
+}
+
+/* 사막 — desert: thin sunset strip + low sun, then a sand plane fading from
+   sunlit pale sand at the horizon to deep umber sand up front. */
+.stage.bg-desert {
+  background-image:
+    radial-gradient(circle at 18% 5%, #fff3c4 0 9px, rgba(255, 243, 196, 0) 10px),
+    linear-gradient(
+      #ff9d6e 0%,
+      #ffbc83 7%,
+      #ffd9a0 12%,
+      #f2cf92 12%,
+      #f2cf92 18%,
+      #ecc281 18%,
+      #ecc281 26%,
+      #e2b46d 26%,
+      #e2b46d 37%,
+      #d6a55c 37%,
+      #d6a55c 51%,
+      #c9954c 51%,
+      #c9954c 69%,
+      #ba843d 69%,
+      #ba843d 86%,
+      #aa7531 86%
+    );
+}
+
+/* 아이슬란드 — snowy: thin pale sky with the snow-capped ridge shrunk onto the
+   high horizon, snowfall dots, then a snowfield plane (bright far, blue-shadowed
+   near). */
+.stage.bg-iceland {
+  background-image:
+    radial-gradient(circle at 28% 24%, rgba(255, 255, 255, 0.95) 0 1.4px, transparent 2.2px),
+    radial-gradient(circle at 74% 56%, rgba(255, 255, 255, 0.85) 0 1.2px, transparent 2px),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='64' shape-rendering='crispEdges'%3E%3Cpolygon points='0,64 34,10 68,64' fill='%23b9cfdf'/%3E%3Cpolygon points='26,28 34,10 42,28 34,24' fill='%23ffffff'/%3E%3Cpolygon points='52,64 92,22 132,64' fill='%23a7c2d6'/%3E%3Cpolygon points='82,34 92,22 102,34 92,30' fill='%23ffffff'/%3E%3Cpolygon points='112,64 138,28 164,64' fill='%23b9cfdf'/%3E%3Cpolygon points='131,38 138,28 145,38 138,35' fill='%23ffffff'/%3E%3C/svg%3E"),
+    linear-gradient(
+      #9cc6e0 0%,
+      #c2def0 8%,
+      #e4f2fa 13%,
+      #f6fbfe 13%,
+      #f6fbfe 20%,
+      #ecf5fb 20%,
+      #ecf5fb 29%,
+      #e1eef7 29%,
+      #e1eef7 41%,
+      #d4e6f2 41%,
+      #d4e6f2 56%,
+      #c6dcec 56%,
+      #c6dcec 74%,
+      #b7d1e5 74%
+    );
+  background-repeat: repeat, repeat, repeat-x, no-repeat;
+  background-position: 0 0, 0 0, left top, center;
+  background-size: 120px 120px, 180px 180px, auto 13%, 100% 100%;
+}
+
+/* Readability on the light scenes: dark titles with a light halo, and a darker
+   thought-bubble so white-ish text keeps contrast. Re-checked for the GF-135
+   ground planes: field/desert grounds darken toward the front but stay in the
+   mid range where the white halo carries the dark title; iceland is light
+   everywhere; city keeps the default light-on-dark text. */
+.stage.bg-field .node-title,
+.stage.bg-desert .node-title,
+.stage.bg-iceland .node-title {
+  color: #2b2f33;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.55);
+}
+.stage.bg-field .thought-bubble,
+.stage.bg-desert .thought-bubble,
+.stage.bg-iceland .thought-bubble {
+  background: rgba(20, 22, 26, 0.62);
+}
+
+/* ---- Stage ambient critters (GF-135) ----
+   One or two tiny moving decorations per background, injected by
+   background-store.js into a dedicated `.stage-ambient` layer. They live at
+   z-index 0 (with the harness, behind every character node), ignore the
+   pointer, and stay ≤ ~12px and dimmed so they can never be mistaken for the
+   24-96px cast. The base rules keep every critter invisible (opacity 0);
+   only the `prefers-reduced-motion: no-preference` gate below reveals and
+   animates them, so reduced-motion users get a fully static scene. */
+.stage-ambient {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+.stage-ambient span {
+  position: absolute;
+  opacity: 0;
+  image-rendering: pixelated;
+}
+
+/* space — a tiny pixel rocket (with flame) on a long diagonal pass. */
+.stage.bg-space .amb-rocket {
+  left: -5%;
+  top: 84%;
+  width: 12px;
+  height: 6px;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='6' shape-rendering='crispEdges'%3E%3Crect x='0' y='2' width='2' height='2' fill='%23ffb04d'/%3E%3Crect x='2' y='2' width='1' height='2' fill='%23ff7a3d'/%3E%3Crect x='3' y='1' width='5' height='4' fill='%23dfe3ea'/%3E%3Crect x='5' y='2' width='2' height='2' fill='%237ec8e3'/%3E%3Crect x='3' y='0' width='2' height='1' fill='%23c34f4f'/%3E%3Crect x='3' y='5' width='2' height='1' fill='%23c34f4f'/%3E%3Cpolygon points='8,1 12,3 8,5' fill='%23c34f4f'/%3E%3C/svg%3E") no-repeat;
+  transform: rotate(-35deg);
+}
+
+/* desert — a dark little scorpion scuttling along the very bottom. */
+.stage.bg-desert .amb-scorpion {
+  left: -4%;
+  bottom: 4%;
+  width: 10px;
+  height: 6px;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' shape-rendering='crispEdges'%3E%3Cg fill='%235f4123'%3E%3Crect x='1' y='0' width='1' height='1'/%3E%3Crect x='0' y='1' width='1' height='1'/%3E%3Crect x='1' y='2' width='1' height='1'/%3E%3Crect x='2' y='3' width='5' height='2'/%3E%3Crect x='7' y='3' width='1' height='1'/%3E%3Crect x='8' y='2' width='2' height='1'/%3E%3Crect x='8' y='4' width='2' height='1'/%3E%3Crect x='2' y='5' width='1' height='1'/%3E%3Crect x='4' y='5' width='1' height='1'/%3E%3Crect x='6' y='5' width='1' height='1'/%3E%3C/g%3E%3C/svg%3E") no-repeat;
+}
+
+/* field — a sparrow silhouette crossing the sky strip; two wing frames in one
+   16x6 sheet, flipped by stepping background-position-x. */
+.stage.bg-field .amb-bird {
+  left: -5%;
+  top: 5%;
+  width: 8px;
+  height: 6px;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='6' shape-rendering='crispEdges'%3E%3Cg fill='%2344505a'%3E%3Crect x='0' y='0' width='2' height='1'/%3E%3Crect x='1' y='1' width='2' height='1'/%3E%3Crect x='3' y='2' width='2' height='1'/%3E%3Crect x='5' y='1' width='2' height='1'/%3E%3Crect x='6' y='0' width='2' height='1'/%3E%3Crect x='8' y='4' width='2' height='1'/%3E%3Crect x='9' y='3' width='2' height='1'/%3E%3Crect x='11' y='2' width='2' height='1'/%3E%3Crect x='13' y='3' width='2' height='1'/%3E%3Crect x='14' y='4' width='2' height='1'/%3E%3C/g%3E%3C/svg%3E") no-repeat;
+  background-size: 200% 100%;
+}
+
+/* deepsea — a small school of three fish drifting right-to-left. */
+.stage.bg-deepsea .amb-fish {
+  left: 104%;
+  width: 8px;
+  height: 5px;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' shape-rendering='crispEdges'%3E%3Crect x='0' y='2' width='1' height='1' fill='%239fd9ef'/%3E%3Crect x='1' y='1' width='4' height='3' fill='%239fd9ef'/%3E%3Cpolygon points='5,2.5 8,0 8,5' fill='%239fd9ef'/%3E%3Crect x='2' y='2' width='1' height='1' fill='%230b3954'/%3E%3C/svg%3E") no-repeat;
+}
+.stage.bg-deepsea .amb-fish.f1 {
+  top: 26%;
+}
+.stage.bg-deepsea .amb-fish.f2 {
+  top: 33%;
+}
+.stage.bg-deepsea .amb-fish.f3 {
+  top: 29%;
+}
+
+/* city — passing cars on the asphalt plane: a pair of warm headlight dots
+   going right, a pair of red taillight dots going left further down. */
+.stage.bg-city .amb-car {
+  left: -5%;
+  top: 72%;
+  width: 10px;
+  height: 4px;
+  background:
+    radial-gradient(circle at 2px 2px, rgba(255, 240, 185, 0.95) 0 1.2px, transparent 2.2px),
+    radial-gradient(circle at 8px 2px, rgba(255, 240, 185, 0.95) 0 1.2px, transparent 2.2px);
+}
+.stage.bg-city .amb-car.rev {
+  left: auto;
+  right: -5%;
+  top: 86%;
+  background:
+    radial-gradient(circle at 2px 2px, rgba(248, 113, 113, 0.85) 0 1.1px, transparent 2px),
+    radial-gradient(circle at 8px 2px, rgba(248, 113, 113, 0.85) 0 1.1px, transparent 2px);
+}
+
+/* iceland — two drifting snowfall layers (tiled dots, shifted by exactly one
+   tile per loop so the fall is seamless). */
+.stage.bg-iceland .amb-snow {
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  background-image: radial-gradient(circle at 6px 6px, rgba(255, 255, 255, 0.9) 0 1px, transparent 1.7px);
+  background-size: 120px 120px;
+}
+.stage.bg-iceland .amb-snow.s2 {
+  background-image: radial-gradient(circle at 11px 9px, rgba(255, 255, 255, 0.85) 0 1.3px, transparent 2.1px);
+  background-size: 160px 160px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .stage.bg-space .amb-rocket {
+    animation: gf-amb-rocket 26s linear infinite;
+  }
+  .stage.bg-desert .amb-scorpion {
+    animation: gf-amb-scuttle 36s steps(180) infinite;
+  }
+  .stage.bg-field .amb-bird {
+    animation:
+      gf-amb-bird 19s linear infinite,
+      gf-amb-flap 0.45s steps(1) infinite;
+  }
+  .stage.bg-deepsea .amb-fish {
+    opacity: 0.55;
+    animation:
+      gf-amb-fish 36s linear infinite,
+      gf-amb-bob 5s ease-in-out infinite;
+  }
+  .stage.bg-deepsea .amb-fish.f2 {
+    opacity: 0.45;
+    animation-duration: 41s, 6s;
+    animation-delay: -13s, -2s;
+  }
+  .stage.bg-deepsea .amb-fish.f3 {
+    opacity: 0.5;
+    animation-duration: 33s, 4.4s;
+    animation-delay: -24s, -1s;
+  }
+  .stage.bg-city .amb-car {
+    animation: gf-amb-car 18s linear infinite;
+  }
+  .stage.bg-city .amb-car.rev {
+    animation: gf-amb-car-rev 23s linear infinite;
+  }
+  .stage.bg-iceland .amb-snow {
+    opacity: 0.55;
+    animation: gf-amb-snowfall 10s linear infinite;
+  }
+  .stage.bg-iceland .amb-snow.s2 {
+    opacity: 0.4;
+    animation: gf-amb-snowdrift 17s linear infinite;
+  }
+}
+body.gf-paused .stage-ambient * {
+  animation-play-state: paused;
+}
+
+/* Each pass holds the critter off-screen (opacity 0) for most of the cycle so
+   the cameos stay rare and ambient rather than busy. */
+@keyframes gf-amb-rocket {
+  0% {
+    left: -5%;
+    top: 84%;
+    opacity: 0;
+  }
+  2% {
+    opacity: 0.8;
+  }
+  25% {
+    opacity: 0.8;
+  }
+  27%,
+  100% {
+    left: 104%;
+    top: 8%;
+    opacity: 0;
+  }
+}
+@keyframes gf-amb-scuttle {
+  0% {
+    left: -4%;
+    opacity: 0;
+  }
+  2% {
+    opacity: 0.75;
+  }
+  28% {
+    opacity: 0.75;
+  }
+  30%,
+  100% {
+    left: 103%;
+    opacity: 0;
+  }
+}
+@keyframes gf-amb-bird {
+  0% {
+    left: -5%;
+    top: 6%;
+    opacity: 0;
+  }
+  2% {
+    opacity: 0.7;
+  }
+  10% {
+    top: 3%;
+  }
+  20% {
+    top: 7%;
+  }
+  30% {
+    top: 4%;
+  }
+  38% {
+    opacity: 0.7;
+  }
+  40%,
+  100% {
+    left: 104%;
+    top: 5%;
+    opacity: 0;
+  }
+}
+@keyframes gf-amb-flap {
+  0%,
+  100% {
+    background-position-x: 0%;
+  }
+  50% {
+    background-position-x: 100%;
+  }
+}
+@keyframes gf-amb-fish {
+  from {
+    left: 104%;
+  }
+  to {
+    left: -8%;
+  }
+}
+@keyframes gf-amb-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(2px);
+  }
+}
+@keyframes gf-amb-car {
+  0% {
+    left: -5%;
+    opacity: 0;
+  }
+  2% {
+    opacity: 0.9;
+  }
+  32% {
+    opacity: 0.9;
+  }
+  34%,
+  100% {
+    left: 103%;
+    opacity: 0;
+  }
+}
+@keyframes gf-amb-car-rev {
+  0%,
+  52% {
+    right: -5%;
+    opacity: 0;
+  }
+  54% {
+    opacity: 0.8;
+  }
+  86% {
+    opacity: 0.8;
+  }
+  88%,
+  100% {
+    right: 103%;
+    opacity: 0;
+  }
+}
+@keyframes gf-amb-snowfall {
+  from {
+    background-position: 0 -120px;
+  }
+  to {
+    background-position: 0 0;
+  }
+}
+@keyframes gf-amb-snowdrift {
+  from {
+    background-position: 0 -160px;
+  }
+  to {
+    background-position: -160px 0;
+  }
+}
+
+/* ---- Card sub-agent dots + count (GF-129 / GF-139) ----
+   One green dot per running sub-agent on the card's right edge, with the
+   exact count as text right below ("8 agents"). The dot grid is capped so any
+   count keeps the card layout intact; the text carries the precise number, so
+   no "+N" cell is needed. Dots pulse softly to read as "running". */
+.agent-stack {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  align-self: center;
+  margin-left: 4px;
+}
+.agent-stack[hidden] {
+  display: none;
+}
+.agent-count {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--working);
+  white-space: nowrap;
+}
+.agent-dots {
+  display: grid;
+  grid-template-columns: repeat(2, 7px);
+  gap: 3px;
+  align-content: center;
+  justify-items: center;
+}
+.agent-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--working);
+  box-shadow: 0 0 4px rgba(74, 222, 128, 0.65);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .agent-dot {
+    animation: gf-dot-pulse 1.6s ease-in-out infinite;
+  }
+  .agent-dot:nth-child(2n) {
+    animation-delay: 0.4s;
+  }
+  .agent-dot:nth-child(3n) {
+    animation-delay: 0.8s;
+  }
+}
+body.gf-paused .agent-dot {
+  animation-play-state: paused;
+}
+@keyframes gf-dot-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.8);
+  }
+}
+
+/* ---- Done bounce (GF-137) ----
+   Every character pops up and down while showing off its prize: the sprite
+   hops while the ground shadow squashes in counterphase, selling the lift.
+   Pure CSS on top of the frame-based done motions — applies to every sheet
+   uniformly (stage nodes, cards, and the detail popover). Held (dragged)
+   characters don't bounce; reduced-motion gets the static frames only. */
+@media (prefers-reduced-motion: no-preference) {
+  .anim-node[data-state="done"]:not(.held) .char-wrap .spr,
+  .session-card.state-done .char .spr,
+  .detail-popover.state-done .detail-head .char .spr {
+    animation: gf-done-bounce 0.55s ease-in-out infinite;
+  }
+  .anim-node[data-state="done"]:not(.held) .char-wrap::after {
+    animation: gf-done-shadow 0.55s ease-in-out infinite;
+  }
+}
+body.gf-paused .anim-node .char-wrap .spr,
+body.gf-paused .anim-node .char-wrap::after,
+body.gf-paused .session-card .char .spr {
+  animation-play-state: paused;
+}
+@keyframes gf-done-bounce {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-22%);
+  }
+}
+@keyframes gf-done-shadow {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(0.78);
+    opacity: 0.6;
+  }
 }

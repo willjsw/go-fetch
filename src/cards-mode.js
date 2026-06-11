@@ -28,10 +28,43 @@ function makeCard(session, onSelect) {
         <span class="hint"></span>
       </div>
       <div class="elapsed"></div>
+    </div>
+    <div class="agent-stack" aria-hidden="true" hidden>
+      <div class="agent-dots"></div>
+      <div class="agent-count"></div>
     </div>`;
   card.addEventListener("click", () => onSelect(session.id));
   const sprite = new SpriteAnimator(card.querySelector(".char"), activeSheet());
-  return { el: card, sprite, state: null, inactive: undefined };
+  return { el: card, sprite, state: null, inactive: undefined, agents: 0 };
+}
+
+/** Cards can't nest sub-agent characters like the stage does, so each card
+ *  shows one small green dot per RUNNING sub-agent (GF-129) with the exact
+ *  count as text right below ("8 agents", GF-139). The dot grid is capped so
+ *  any count keeps the card layout intact — the text carries the precise
+ *  number. Counts come from the live snapshot — a sub-agent node exists
+ *  exactly while it runs (removed on SubagentStop/eviction) — so this is
+ *  real-time. */
+const MAX_AGENT_DOTS = 6;
+function patchAgentDots(entry, count) {
+  if (entry.agents === count) return;
+  entry.agents = count;
+  const stack = entry.el.querySelector(".agent-stack");
+  if (!stack) return;
+  stack.hidden = count === 0;
+  const dotsBox = stack.querySelector(".agent-dots");
+  const countBox = stack.querySelector(".agent-count");
+  if (count === 0) {
+    dotsBox.innerHTML = "";
+    countBox.textContent = "";
+    return;
+  }
+  const dots = Math.min(count, MAX_AGENT_DOTS);
+  let html = "";
+  for (let i = 0; i < dots; i++) html += '<span class="agent-dot"></span>';
+  dotsBox.innerHTML = html;
+  countBox.textContent = `${count} agent${count === 1 ? "" : "s"}`;
+  entry.el.title = `Click for details — ${count} sub-agent${count === 1 ? "" : "s"} running`;
 }
 
 // Character switch (GF-118): drop every card; the next render rebuilds them
@@ -70,15 +103,24 @@ function patchCard(entry, session) {
 }
 
 /**
- * Render the session cards into `listEl`.
+ * Render the session cards into `listEl`. Receives the FULL snapshot (top-level
+ * sessions and sub-agent nodes): cards are rendered for top-level sessions
+ * only, and each card shows its running sub-agents as green dots (GF-129).
  * @param {HTMLElement} listEl the `#sessions` container
- * @param {Array<object>} sessions current session snapshot
+ * @param {Array<object>} sessions current session snapshot (full, incl. sub-agents)
  * @param {(id: string) => void} onSelect called with a session id on card click
  */
 export function renderCardsMode(listEl, sessions, onSelect) {
   if (!listEl) return;
 
-  const desired = new Set(sessions.map((s) => s.id));
+  const topLevel = sessions.filter((s) => !s.parent_session_id);
+  const agentCounts = new Map();
+  for (const s of sessions) {
+    if (!s.parent_session_id) continue;
+    agentCounts.set(s.parent_session_id, (agentCounts.get(s.parent_session_id) || 0) + 1);
+  }
+
+  const desired = new Set(topLevel.map((s) => s.id));
   for (const [id, entry] of cards) {
     if (!desired.has(id)) {
       entry.sprite.destroy();
@@ -87,13 +129,14 @@ export function renderCardsMode(listEl, sessions, onSelect) {
     }
   }
 
-  sessions.forEach((session, i) => {
+  topLevel.forEach((session, i) => {
     let entry = cards.get(session.id);
     if (!entry) {
       entry = makeCard(session, onSelect);
       cards.set(session.id, entry);
     }
     patchCard(entry, session);
+    patchAgentDots(entry, agentCounts.get(session.id) || 0);
     // Keep DOM order in sync with the snapshot order.
     const at = listEl.children[i];
     if (at !== entry.el) listEl.insertBefore(entry.el, at || null);

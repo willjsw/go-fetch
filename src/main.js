@@ -10,6 +10,7 @@
 import { STATE_COLOR } from "./character-spec.js";
 import { SpriteAnimator } from "./sprite-engine.js";
 import { activeSheet, activeCharacter, setCharacter, onCharacterChange } from "./character-store.js";
+import { BACKGROUND_LABELS, activeBackground, setBackground, applyBackground } from "./background-store.js";
 import { CHARACTER_LABELS } from "./sprites/index.js";
 import { renderCardsMode } from "./cards-mode.js";
 import { renderAnimMode } from "./anim-mode.js";
@@ -132,13 +133,14 @@ function renderActiveMode() {
     }
   } else {
     if (stage) stage.hidden = true;
-    // Cards mode shows top-level sessions only; sub-agents (Layer 2) are nested
-    // visually in the animated mode, not listed as separate cards.
+    // Cards mode lists top-level sessions only, but receives the FULL snapshot:
+    // sub-agent nodes (Layer 2) become green running-dots on their parent's
+    // card (GF-129) instead of separate cards.
     const topLevel = currentSessions.filter((s) => !s.parent_session_id);
     const hasSessions = topLevel.length > 0;
     empty.hidden = hasSessions;
     list.hidden = !hasSessions;
-    renderCardsMode(list, topLevel, showDetail);
+    renderCardsMode(list, currentSessions, showDetail);
   }
 
   syncOpenDetail();
@@ -206,6 +208,14 @@ export async function openSettings() {
         ).join("")}
       </select>
     </label>
+    <label class="toggle">Background
+      <select id="background-select" class="char-select">
+        ${BACKGROUND_LABELS.map(
+          ([id, label]) =>
+            `<option value="${id}" ${id === activeBackground() ? "selected" : ""}>${label}</option>`,
+        ).join("")}
+      </select>
+    </label>
     <div class="settings-group">General</div>
     <label class="toggle"><input type="checkbox" id="autostart-toggle" ${autostart ? "checked" : ""}/> Start on login</label>
     <button class="detail-close" type="button">Close</button>`;
@@ -234,6 +244,9 @@ export async function openSettings() {
   );
   panel.querySelector("#character-select").addEventListener("change", (e) => {
     setCharacter(e.target.value);
+  });
+  panel.querySelector("#background-select").addEventListener("change", (e) => {
+    setBackground(e.target.value);
   });
   panel.querySelector("#autostart-toggle").addEventListener("change", async (e) => {
     try {
@@ -341,6 +354,9 @@ window.addEventListener("DOMContentLoaded", () => {
   // The empty-state character naps with a live sprite too (GF-116). The
   // animator lives until a character switch; the ticker pauses it when hidden.
   mountEmptyChar();
+
+  // Restore the persisted stage background (GF-128).
+  applyBackground();
 
   // Character switch (GF-118): cards/stage tear down via their own hooks —
   // here we rebuild the empty-state sprite and repaint the active mode. Only a

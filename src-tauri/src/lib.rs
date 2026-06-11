@@ -25,20 +25,32 @@ use tauri::{Emitter, Manager};
 use tauri_plugin_notification::NotificationExt;
 
 /// How often the idle ticker polls each session's state — demotes quiet `Done`
-/// sessions to `Idle` (ST-3) and evicts stale ones (SL-3). 3s keeps the widget's
-/// state reasonably fresh without busy-looping.
-const IDLE_TICK: Duration = Duration::from_secs(3);
+/// sessions to `Idle` (ST-3), evicts stale ones (SL-3), and (GF-131) pushes a
+/// fresh snapshot so elapsed counters tick live. 1s keeps the widget real-time;
+/// the work per tick is a few in-memory scans, and the snapshot push is gated
+/// on the widget being visible.
+const IDLE_TICK: Duration = Duration::from_secs(1);
 
 /// How often to poll `claude agents --json` for pre-existing sessions (SL-4 /
-/// D9). The first tick fires immediately (poll once at startup), then every 10s.
-/// Polling pauses while the widget is hidden to save battery (D9).
-const PREEXISTING_POLL_INTERVAL: Duration = Duration::from_secs(10);
+/// D9, tightened by GF-131). The first tick fires immediately (poll once at
+/// startup), then every 2s — a warm call costs ~0.3s, and the loop awaits each
+/// call (with `MissedTickBehavior::Delay`), so polls can never overlap even
+/// when a cold call takes longer than the interval. Polling still pauses while
+/// the widget is hidden to save battery (D9).
+const PREEXISTING_POLL_INTERVAL: Duration = Duration::from_secs(2);
 
 /// Event the widget frontend listens on for session snapshots.
 const SESSIONS_UPDATE_EVENT: &str = "sessions-update";
 
 /// Apply widget display preferences to the main window (Task 14 / WC-5):
-/// always-on-top, and auto-hide when no session is active.
+/// always-on-top, and — only when `auto_hide` is enabled — hide while no
+/// session is active / reappear on activity.
+///
+/// GF-132: with `auto_hide` OFF this must not touch visibility at all. It used
+/// to call `window.show()` on every refresh, so a widget the user explicitly
+/// hid (− button / tray) popped back up on the next hook event — one of the
+/// "window appears inconsistently" reports. Visibility in manual mode belongs
+/// to the user (tray click, Dock click, − button) exclusively.
 fn apply_window_prefs(
     handle: &tauri::AppHandle,
     store: &settings::SettingsStore,
@@ -47,10 +59,12 @@ fn apply_window_prefs(
     let widget = store.get().widget;
     if let Some(window) = handle.get_webview_window("main") {
         let _ = window.set_always_on_top(widget.always_on_top);
-        if widget.auto_hide && !manager.has_active() {
-            let _ = window.hide();
-        } else {
-            let _ = window.show();
+        if widget.auto_hide {
+            if manager.has_active() {
+                let _ = window.show();
+            } else {
+                let _ = window.hide();
+            }
         }
     }
 }
@@ -218,6 +232,7 @@ pub fn run() {
             // Idle ticker (ST-3): demote quiet sessions, refresh per change.
             let i_manager = manager.clone();
             let i_notify = notify.clone();
+            let i_handle = handle.clone();
             tauri::async_runtime::spawn(async move {
                 let mut ticker = tokio::time::interval(IDLE_TICK);
                 loop {
@@ -239,6 +254,17 @@ pub fn run() {
                     for id in i_manager.tick_evict() {
                         (i_notify)(&id);
                     }
+                    // GF-131: push a fresh snapshot every tick while the widget
+                    // is visible, so elapsed counters and summaries stay live
+                    // between (possibly sparse) hook events. Plain emit — no
+                    // notification or window-pref work on this path.
+                    let visible = i_handle
+                        .get_webview_window("main")
+                        .and_then(|w| w.is_visible().ok())
+                        .unwrap_or(false);
+                    if visible {
+                        let _ = i_handle.emit(SESSIONS_UPDATE_EVENT, &i_manager.snapshot());
+                    }
                 }
             });
 
@@ -253,6 +279,9 @@ pub fn run() {
             let p_handle = handle.clone();
             tauri::async_runtime::spawn(async move {
                 let mut ticker = tokio::time::interval(PREEXISTING_POLL_INTERVAL);
+                // A poll can outlast the (tight, GF-131) interval: don't burst
+                // missed ticks afterwards — just resume the cadence.
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
                 loop {
                     ticker.tick().await;
                     // Skip the poll while the widget is hidden (battery, D9).
@@ -281,6 +310,17 @@ pub fn run() {
                                 (p_notify)(id);
                             } else {
                                 p_manager.touch_seen(id, now);
+                            }
+                            // GF-131: the poll's `status` (busy/idle) refines a
+                            // still-pending (hook-blind) session's display state
+                            // — sessions started before GoFetch registered its
+                            // hooks never emit events, so this is their only
+                            // live signal. Hook-confirmed sessions are never
+                            // touched, and no notification can fire (SL-5).
+                            if let Some(status) = entry.status.as_deref() {
+                                if p_manager.update_pending_status(id, status, now) {
+                                    (p_notify)(id);
+                                }
                             }
                         }
                         // Drop dismissed ids whose sessions have ended (absent
@@ -324,18 +364,40 @@ pub fn run() {
                     .build(app);
             }
 
-            // Apply initial window preferences (always-on-top + auto-hide).
+            // Apply initial window preferences (always-on-top), then ALWAYS
+            // show the widget on launch (GF-132): the user just started the
+            // app, so it must visibly appear. Previously, auto_hide + no active
+            // sessions hid the window immediately at startup — the app looked
+            // like it never opened until the tray icon was clicked. Auto-hide
+            // may still reclaim it later, on the next session-state change.
             apply_window_prefs(&handle, &settings_store, &manager);
+            if let Some(window) = handle.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
 
             Ok(())
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
-    // Clean up GoFetch's hooks from settings.json when the app exits (SE-3).
-    app.run(|_app_handle, event| {
-        if let tauri::RunEvent::Exit = event {
-            hook_installer::unregister();
+    // Clean up GoFetch's hooks from settings.json when the app exits (SE-3),
+    // and restore the widget when the Dock icon is clicked (GF-132).
+    app.run(|app_handle, event| {
+        match event {
+            tauri::RunEvent::Exit => hook_installer::unregister(),
+            // macOS fires `Reopen` when the running app is activated again —
+            // e.g. its Dock icon or Launchpad entry is clicked. Without this
+            // handler a hidden widget (auto-hide / − button) could only come
+            // back via the small tray icon; the Dock icon appeared dead.
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Reopen { .. } => {
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
+            _ => {}
         }
     });
 }

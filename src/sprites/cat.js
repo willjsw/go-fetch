@@ -5,20 +5,32 @@
 // between both front paws (양손으로 공 굴리기, 4f).
 //
 // Other motions: tailchase(꼬리 잡기 빙글빙글) / hiss(등 세우고 하악질, 3f) /
-// mouse(쥐 물고 옴, 3f) / curl(몸 말고 잠, 3f) / perk(귀 쫑긋 두리번, 4f).
+// buddy(리트리버와 같은 코랄 AI 버디 물고 옴, GF-138) / curl(몸 말고 잠, 3f) /
+// perk(귀 쫑긋 두리번, 4f).
 
 const PALETTE = {
   C: "#c9ced8", // fur
   S: "#969eab", // shade — tail, stripes, far legs
   N: "#22262c", // eyes / nose / mouth
   P: "#ef9aac", // tongue / inner ear
-  m: "#8d8d96", // caught mouse
   o: "#f2a23c", // toy ball
+  b: "#d97757", // fetched AI buddy — same coral friend as the retriever's
+  q: "#bc5f41", // AI buddy bottom shading
 };
 
 const E = "................................";
 const mirror = (grid) => grid.map((row) => [...row].reverse().join(""));
 const edit = (g, edits) => g.map((row, y) => edits[y] ?? row);
+/** Replace only a column span per row ({ y: [x, text] }), keeping the rest of
+ *  the row — unlike `edit`, safe to apply over frames whose other columns
+ *  differ (e.g. the walk cycle's leg rows). */
+const overlay = (g, edits) =>
+  g.map((row, y) => {
+    const e = edits[y];
+    if (!e) return row;
+    const [x, text] = e;
+    return row.slice(0, x) + text + row.slice(x + text.length);
+  });
 
 // Sitting upright, tail wrapped around the front.
 // Sitting upright: triangle ears, 2px eyes with a real gap, pink nose, striped
@@ -225,16 +237,22 @@ const HISS_C = edit(
   {},
 );
 
-// Trophy mouse dangling from the mouth, tail swinging proudly (3f).
-const mouseRows = {
-  8: "....S....................CCNNCC.",
-  9: "....S...................CCCCCm..",
-  10: ".....CCCCCCCCCCCCCCCCCCCCCCCmm..",
-  11: ".....CCCCCCCCCCCCCCCCCCCCCCm....",
+// Done = the cat trots back with the same prize as the retriever (GF-138):
+// the square coral AI buddy (slim eyes, tiny smile, shaded base — the app-icon
+// friend) dangling from its mouth, hanging in front of the chest. Overlaid on
+// the walk frames column-wise so each frame keeps its own leg positions.
+const BUDDY_PIXELS = {
+  9: [26, "bbbbb"],
+  10: [25, "bbbbbbb"],
+  11: [25, "bbNbbNb"],
+  12: [25, "bbNbbNb"],
+  13: [25, "bbbbbbb"],
+  14: [25, "bbbNNbb"],
+  15: [26, "qqqqq"],
 };
-const MOUSE_A = edit(WALKC_A, mouseRows);
-const MOUSE_B = edit(WALKC_B, mouseRows);
-const MOUSE_C = edit(WALKC_C, mouseRows);
+const BUDDY_A = overlay(WALKC_A, BUDDY_PIXELS);
+const BUDDY_B = overlay(WALKC_B, BUDDY_PIXELS);
+const BUDDY_C = overlay(WALKC_C, BUDDY_PIXELS);
 
 // Curled sleep: a gray cinnamon roll, breathing.
 const CURL_A = [
@@ -300,7 +318,7 @@ export default {
     ball: { fps: 8, frames: [BALL_L, BALL_BASE, BALL_R, BALL_BASE] },
     tailchase: { fps: 5, frames: [CHASE, mirror(CHASE)] },
     hiss: { fps: 8, frames: [HISS_A, HISS_B, HISS_C] },
-    mouse: { fps: 4, frames: [MOUSE_A, MOUSE_B, MOUSE_C, MOUSE_B] },
+    buddy: { fps: 4, frames: [BUDDY_A, BUDDY_B, BUDDY_C, BUDDY_B] },
     curl: { fps: 1.5, frames: [CURL_A, CURL_B, CURL_C] },
     perk: { fps: 2, frames: [PERK_L, SIT, PERK_R, SIT] },
   },
@@ -308,7 +326,7 @@ export default {
     working: "ball",
     waiting: "tailchase",
     error: "hiss",
-    done: "mouse",
+    done: "buddy",
     idle: "curl",
     pending: "perk",
   },

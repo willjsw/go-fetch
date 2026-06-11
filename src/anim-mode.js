@@ -33,6 +33,7 @@ const SCALE_FAR = 0.62; // sprite scale at v=0 (back of the floor)
 const SCALE_NEAR = 1.12; // sprite scale at v=1 (front of the floor)
 const LEASH_SESSION = 0.42; // how far a session may wander from the root (u/v units)
 const LEASH_SUB = 0.2; // how far a sub-agent may wander from its session
+const LEASH_ANCHOR = 0.22; // leash attach height as a fraction of sprite size (GF-125)
 const DRAG_THRESHOLD = 5; // px of pointer travel before a click becomes a drag
 
 /** Per-state stroll personality: what to do on arrival, for how long, and how
@@ -74,6 +75,121 @@ let rafId = null;
 let lastTick = 0;
 let resizeObserver = null;
 
+/** Align mode (GF-127): when on, the cast lines up in three hierarchy rows —
+ *  root (Claude Code) on top, sessions in the middle, sub-agents at the bottom
+ *  under their parents — instead of free-roaming. Persisted across runs. */
+const ALIGN_KEY = "gofetch:anim-align";
+let alignedMode = (() => {
+  try {
+    return localStorage.getItem(ALIGN_KEY) === "1";
+  } catch (_err) {
+    return false;
+  }
+})();
+
+function setAligned(on) {
+  alignedMode = !!on;
+  try {
+    localStorage.setItem(ALIGN_KEY, alignedMode ? "1" : "0");
+  } catch (_err) {
+    /* persistence is best-effort */
+  }
+  // Leaving align mode: nudge everyone to pick fresh stroll targets soon.
+  if (!alignedMode) {
+    for (const ent of entities.values()) {
+      if (ent.mode !== "held") {
+        ent.mode = "act";
+        ent.modeLeft = rand(0.2, 0.8);
+      }
+    }
+  }
+}
+
+/** Row positions (v) for the three hierarchy tiers in align mode. */
+const ALIGN_V = { root: 0.12, session: 0.55, subagent: 0.88 };
+const ALIGN_SUB_SPREAD = 0.09; // u-offset between siblings under one parent
+
+/**
+ * Compute the lined-up slot for every entity: sessions spread evenly across
+ * the middle row (alphabetical by project, stable), sub-agents centered under
+ * their parent's slot, the overflow node at the end of the session row.
+ * @returns {Map<string, {u:number, v:number}>}
+ */
+function alignSlots() {
+  const slots = new Map();
+  slots.set(ROOT_ID, { u: 0.5, v: ALIGN_V.root });
+
+  const sessions = [...entities.values()]
+    .filter((e) => e.role === "session")
+    .sort((a, b) => {
+      const ap = a.session ? a.session.project_name : "";
+      const bp = b.session ? b.session.project_name : "";
+      return ap.localeCompare(bp) || a.id.localeCompare(b.id);
+    });
+  const overflow = entities.get(OVERFLOW_ID);
+  const rowLen = sessions.length + (overflow ? 1 : 0);
+  sessions.forEach((ent, i) => {
+    slots.set(ent.id, { u: (i + 1) / (rowLen + 1), v: ALIGN_V.session });
+  });
+  if (overflow) {
+    slots.set(OVERFLOW_ID, { u: rowLen / (rowLen + 1), v: ALIGN_V.session });
+  }
+
+  const subs = [...entities.values()]
+    .filter((e) => e.role === "subagent")
+    .sort((a, b) => a.id.localeCompare(b.id));
+  const byParent = new Map();
+  for (const sub of subs) {
+    if (!byParent.has(sub.parentId)) byParent.set(sub.parentId, []);
+    byParent.get(sub.parentId).push(sub);
+  }
+  for (const [parentId, siblings] of byParent) {
+    const anchor = slots.get(parentId) || { u: 0.5 };
+    siblings.forEach((sub, idx) => {
+      const u = anchor.u + (idx - (siblings.length - 1) / 2) * ALIGN_SUB_SPREAD;
+      slots.set(sub.id, { u: clamp01(u), v: ALIGN_V.subagent });
+    });
+  }
+  return slots;
+}
+
+/** Steer every (non-held) entity toward its align-mode slot. */
+function applyAlignment() {
+  const slots = alignSlots();
+  for (const ent of entities.values()) {
+    if (ent.held) continue;
+    const slot = slots.get(ent.id);
+    if (!slot) continue;
+    ent.tu = slot.u;
+    ent.tv = slot.v;
+    if (Math.hypot(ent.u - slot.u, ent.v - slot.v) > 0.012 && ent.mode !== "stroll") {
+      ent.mode = "stroll";
+      applyAnim(ent);
+    }
+  }
+}
+
+/** The align toggle button, overlaid on the stage's top-right (GF-127). */
+function ensureAlignButton(stage) {
+  let btn = stage.querySelector(".align-toggle");
+  if (!btn) {
+    btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "align-toggle";
+    btn.textContent = "Align";
+    btn.title = "Line up by hierarchy (Claude Code → sessions → sub-agents)";
+    btn.addEventListener("click", () => {
+      setAligned(!alignedMode);
+      btn.classList.toggle("active", alignedMode);
+      btn.setAttribute("aria-pressed", alignedMode ? "true" : "false");
+      ensureLoop();
+    });
+    stage.appendChild(btn);
+  }
+  btn.classList.toggle("active", alignedMode);
+  btn.setAttribute("aria-pressed", alignedMode ? "true" : "false");
+}
+
 const reducedMotion =
   typeof matchMedia === "function"
     ? matchMedia("(prefers-reduced-motion: reduce)")
@@ -89,7 +205,12 @@ function makeNodeEl(role, session) {
   el.dataset.role = role;
   const bubble = session && session.summary ? `<div class="thought-bubble"></div>` : "";
   const title = role === "overflow" ? "+0" : session ? session.project_name : "Claude Code";
-  el.innerHTML = `${bubble}<div class="char-wrap"></div><div class="node-title${role === "overflow" ? " overflow-count" : ""}">${escapeHtml(title)}</div>`;
+  // The attention badge ("!") lives in a positioning wrapper NEXT TO the sprite
+  // host — not inside `.char-wrap`, whose innerHTML the sprite engine replaces
+  // on every setAnim. CSS shows it only for waiting (yellow) / error (red), at
+  // head height beside the sprite so it never overlaps the thought bubble
+  // above (GF-126).
+  el.innerHTML = `${bubble}<div class="char-box"><div class="char-wrap"></div><div class="attn-badge" aria-hidden="true">!</div></div><div class="node-title${role === "overflow" ? " overflow-count" : ""}">${escapeHtml(title)}</div>`;
   el.addEventListener("animationend", () => el.classList.remove("anim-spawn"), {
     once: true,
   });
@@ -305,8 +426,10 @@ function stepBehavior(ent, dt) {
   if (ent.mode === "act") {
     ent.modeLeft -= dt;
     if (ent.modeLeft <= 0) {
-      if (!b.roam) {
-        // Needs the user: keep acting in place until the state changes.
+      if (!b.roam || alignedMode) {
+        // Needs the user — or the stage is lined up (GF-127): keep acting in
+        // place. In align mode, applyAlignment() re-targets the slot if the
+        // entity drifts, so no roaming target is picked here.
         ent.modeLeft = b.act;
         return;
       }
@@ -317,8 +440,10 @@ function stepBehavior(ent, dt) {
     return;
   }
 
-  // stroll: walk toward the target.
-  const speed = ent.role === "root" ? ROOT_SPEED : b.speed;
+  // stroll: walk toward the target. In align mode everyone hustles at 3×
+  // their stroll speed so toggling the line-up snaps into rows quickly.
+  const base = ent.role === "root" ? ROOT_SPEED : b.speed;
+  const speed = alignedMode ? base * 3 : base;
   const du = ent.tu - ent.u;
   const dv = ent.tv - ent.v;
   const dist = Math.hypot(du, dv);
@@ -421,11 +546,14 @@ function drawLeashes(dims) {
     const to = project(ent, dims);
     const fromSize = sizeOf(parent, dims);
     const toSize = sizeOf(ent, dims);
-    // Attach at the characters' bodies: nodes anchor feet-down, with the title
-    // strip (~14px) between the floor point and the sprite.
+    // Attach low on the body (lower-rear, ~22% of the sprite above the title
+    // strip), not at the sprite's vertical center: a center anchor sits at head
+    // height on small sprites, so a leash to a character further back appeared
+    // to pierce through the head (GF-125). The harness layer draws behind the
+    // nodes, so a low anchor reads as clipped to the character's back.
     links.push({
-      from: { x: from.x, y: from.y - 14 - fromSize * 0.5 },
-      to: { x: to.x, y: to.y - 14 - toSize * 0.5 },
+      from: { x: from.x, y: from.y - 14 - fromSize * LEASH_ANCHOR },
+      to: { x: to.x, y: to.y - 14 - toSize * LEASH_ANCHOR },
       session: ent.session,
     });
   }
@@ -516,8 +644,12 @@ function tick(now) {
   dims.density = densityScale();
 
   if (!reducedMotion.matches) {
+    // Align mode (GF-127): steer everyone toward their hierarchy slot and skip
+    // the separation pass — the rows are already collision-free, and pushing
+    // entities apart would ruin the line-up.
+    if (alignedMode) applyAlignment();
     for (const ent of entities.values()) stepBehavior(ent, dt);
-    separate(dims);
+    if (!alignedMode) separate(dims);
   }
   applyTransforms(dims);
   drawLeashes(dims);
@@ -576,6 +708,7 @@ export function renderAnimMode(stage, sessions, onSelect) {
   onSelectFn = onSelect;
   const list = Array.isArray(sessions) ? sessions : [];
   harnessSvg = ensureHarnessLayer(stage);
+  ensureAlignButton(stage);
 
   if (!resizeObserver && typeof ResizeObserver !== "undefined") {
     // Positions are relative (u,v) so a resize only needs a reprojection — the
