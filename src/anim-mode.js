@@ -90,7 +90,12 @@ function makeNodeEl(role, session) {
   el.dataset.role = role;
   const bubble = session && session.summary ? `<div class="thought-bubble"></div>` : "";
   const title = role === "overflow" ? "+0" : session ? session.project_name : "Claude Code";
-  el.innerHTML = `${bubble}<div class="char-wrap"></div><div class="node-title${role === "overflow" ? " overflow-count" : ""}">${escapeHtml(title)}</div>`;
+  // The attention badge ("!") lives in a positioning wrapper NEXT TO the sprite
+  // host — not inside `.char-wrap`, whose innerHTML the sprite engine replaces
+  // on every setAnim. CSS shows it only for waiting (yellow) / error (red), at
+  // head height beside the sprite so it never overlaps the thought bubble
+  // above (GF-126).
+  el.innerHTML = `${bubble}<div class="char-box"><div class="char-wrap"></div><div class="attn-badge" aria-hidden="true">!</div></div><div class="node-title${role === "overflow" ? " overflow-count" : ""}">${escapeHtml(title)}</div>`;
   el.addEventListener("animationend", () => el.classList.remove("anim-spawn"), {
     once: true,
   });

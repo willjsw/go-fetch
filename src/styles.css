@@ -159,9 +159,61 @@ body {
 .anim-node.held {
   cursor: grabbing;
 }
+.char-box {
+  position: relative;
+}
 .char-wrap {
   display: block;
   position: relative;
+}
+
+/* Attention badge (GF-126): a small "!" beside the head for the states the
+   user must not miss — waiting (yellow) and error (red). Anchored to the
+   sprite box, which sits BELOW the thought bubble in the node's flex column,
+   so badge and bubble can never overlap. Hidden for every other state. */
+.attn-badge {
+  display: none;
+  position: absolute;
+  top: 6%;
+  right: -13px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 14px;
+  text-align: center;
+  z-index: 3;
+  pointer-events: none;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+}
+.anim-node[data-state="waiting"] .attn-badge {
+  display: block;
+  background: var(--waiting);
+  color: #1c1c22;
+}
+.anim-node[data-state="error"] .attn-badge {
+  display: block;
+  background: var(--error);
+  color: #fff;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .anim-node[data-state="waiting"] .attn-badge,
+  .anim-node[data-state="error"] .attn-badge {
+    animation: gf-badge-pulse 1s ease-in-out infinite;
+  }
+}
+body.gf-paused .attn-badge {
+  animation-play-state: paused;
+}
+@keyframes gf-badge-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.3);
+  }
 }
 
 /* Soft ground shadow under every character — the cheap cue that sells the
