@@ -808,3 +808,59 @@ body.gf-paused .attn-badge {
 .stage.bg-iceland .thought-bubble {
   background: rgba(20, 22, 26, 0.62);
 }
+
+/* ---- Card sub-agent dots (GF-129) ----
+   One green dot per running sub-agent, on the card's right edge. A fixed
+   two-column grid keeps any count from distorting the card layout; past the
+   cap the last cell shows "+N". Dots pulse softly to read as "running". */
+.agent-dots {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: repeat(2, 7px);
+  gap: 3px;
+  align-content: center;
+  justify-items: center;
+  align-self: center;
+  margin-left: 4px;
+}
+.agent-dots[hidden] {
+  display: none;
+}
+.agent-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--working);
+  box-shadow: 0 0 4px rgba(74, 222, 128, 0.65);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .agent-dot {
+    animation: gf-dot-pulse 1.6s ease-in-out infinite;
+  }
+  .agent-dot:nth-child(2n) {
+    animation-delay: 0.4s;
+  }
+  .agent-dot:nth-child(3n) {
+    animation-delay: 0.8s;
+  }
+}
+body.gf-paused .agent-dot {
+  animation-play-state: paused;
+}
+.agent-more {
+  grid-column: 1 / -1;
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--working);
+}
+@keyframes gf-dot-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.8);
+  }
+}

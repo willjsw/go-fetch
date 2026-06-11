@@ -133,13 +133,14 @@ function renderActiveMode() {
     }
   } else {
     if (stage) stage.hidden = true;
-    // Cards mode shows top-level sessions only; sub-agents (Layer 2) are nested
-    // visually in the animated mode, not listed as separate cards.
+    // Cards mode lists top-level sessions only, but receives the FULL snapshot:
+    // sub-agent nodes (Layer 2) become green running-dots on their parent's
+    // card (GF-129) instead of separate cards.
     const topLevel = currentSessions.filter((s) => !s.parent_session_id);
     const hasSessions = topLevel.length > 0;
     empty.hidden = hasSessions;
     list.hidden = !hasSessions;
-    renderCardsMode(list, topLevel, showDetail);
+    renderCardsMode(list, currentSessions, showDetail);
   }
 
   syncOpenDetail();
