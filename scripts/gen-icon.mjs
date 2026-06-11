@@ -99,7 +99,7 @@ function scenePixel(x, y) {
 const SIZE = 1024;
 const MARGIN = 64; // transparent border (macOS icon grid)
 const RADIUS = 200; // background corner radius
-const BG = [28, 28, 34, 255]; // widget dark (#1c1c22)
+const BG = [250, 242, 215, 255]; // cream (#FAF2D7)
 const SCALE = 36; // 24×22 → 864×792
 const OFF_X = (SIZE - GRID_W * SCALE) / 2; // 64
 const OFF_Y = (SIZE - GRID_H * SCALE) / 2; // 148
