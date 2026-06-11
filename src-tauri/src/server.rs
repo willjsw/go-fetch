@@ -152,6 +152,13 @@ async fn handle_event(
                     None => event.session_id.clone(),
                 };
                 (state.notify)(&notify_id);
+                // GF-130: a SubagentStop may have promoted a parent whose `Done`
+                // was deferred while its children ran. Refresh under the parent
+                // id too so its (now due) completion notification can fire — the
+                // dedup layer keeps this quiet when nothing changed.
+                if event.agent_id.is_some() && event.hook_event_name == "SubagentStop" {
+                    (state.notify)(&event.session_id);
+                }
             }
             // GF-114 probe: dump sub-agent-related payloads so we can verify
             // whether `agent_id` is actually delivered (the Layer 2 gate). These
