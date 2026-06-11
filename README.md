@@ -97,6 +97,43 @@ widget UI (WebView) + native notifications
 - **Non-blocking.** Hooks treat connection failures and timeouts as
   fire-and-forget — if the widget isn't running, Claude Code is unaffected.
 
+## Known limitations (Claude Code upstream)
+
+GoFetch can only show what Claude Code's hooks report. Two gaps come from
+**Claude Code itself, not GoFetch**, and affect every hook-based monitor equally.
+Observed on Claude Code **2.1.172**; exact behavior is version-dependent, so
+verify on your own version with the runbook below.
+
+- **Interrupted turns emit no event — in every environment.** When you interrupt
+  a running turn (Esc / Ctrl+C), Claude Code fires no hook: the official
+  [hooks reference](https://code.claude.com/docs/en/hooks) states *"Stop hooks do
+  not fire if stoppage occurred due to user interrupt,"* `StopFailure` only fires
+  on API errors, and there is no dedicated interrupt hook. An interrupted session
+  therefore stays in its **last** state (usually 🟢 Working) until a later event
+  arrives or it is evicted after the stale timeout. This is not specific to IDEs —
+  the terminal CLI behaves the same way.
+
+- **IDE extensions don't fire the permission `Notification` hook (VS Code
+  confirmed).** The VS Code extension renders permission prompts in its own native
+  UI and does **not** fire the `Notification` (`permission_prompt`) hook, so a
+  session waiting for your approval inside VS Code stays 🟢 Working instead of
+  turning 🟡 Waiting. `Stop` and `PreToolUse` *do* fire in the extension, so
+  Working/Done still work — only Waiting is missed. The settings file
+  (`~/.claude/settings.json`) is shared between the CLI and the extension. This is
+  tracked in upstream Claude Code issues. JetBrains hook behavior is undocumented
+  and unverified.
+
+### Verify on your version
+
+GoFetch logs every event it receives to stderr, so you can confirm exactly what
+your Claude Code version emits — no guessing:
+
+1. Run `npm run dev` and watch the console for `[gofetch] event session_id=… hook_event_name=… -> …` lines.
+2. In a **terminal** Claude Code session, trigger a permission prompt (e.g. a file
+   write), then press Esc to interrupt — note which `hook_event_name`s arrive.
+3. Repeat inside the **VS Code** extension and compare. Anything that doesn't show
+   up in the log is a gap on the Claude Code side, not in GoFetch.
+
 ## Installation
 
 ### Download
