@@ -140,6 +140,13 @@ pub struct Session {
     /// build/test as inactive. Internal heuristic input; not serialized.
     #[serde(skip)]
     pub mid_tool: bool,
+    /// GF-130: a `Stop` arrived while this session's sub-agents were still
+    /// running (e.g. background Task agents outlive the turn), so its `Done` was
+    /// deferred and the session stays `Working`. Promoted to `Done` — and only
+    /// then notified — when the last child stops (or is evicted). Cleared by any
+    /// later real event for the session. Internal; not serialized.
+    #[serde(skip)]
+    pub awaiting_subagents: bool,
     /// Layer 2 (GF-108): for a sub-agent node, the `session_id` of its parent
     /// session. Sub-agents share the parent's `session_id`, so they are tracked
     /// in a separate map and carry this link for the widget to nest them.
@@ -181,6 +188,7 @@ impl Session {
             pending: false,
             inactive: false,
             mid_tool: false,
+            awaiting_subagents: false,
             parent_session_id: None,
             agent_id: None,
             last_activity: now,
@@ -196,6 +204,11 @@ impl Session {
             return "detected — awaiting activity".to_string();
         }
         match self.state {
+            // GF-130: the turn ended but background sub-agents are still running
+            // — completion is deferred until the last child finishes.
+            SessionState::Working if self.awaiting_subagents => {
+                "waiting for sub-agents to finish".to_string()
+            }
             // A `Working` session flagged inactive (no hook events for a while)
             // shows the heuristic hint instead of the last tool — it may have been
             // interrupted or be waiting on an IDE permission prompt we never saw.
@@ -495,6 +508,13 @@ impl SessionManager {
         let Some(mapped) = map_event_to_state(event) else {
             return EventOutcome::Ignored;
         };
+        // GF-130: `Stop` only ends the parent's TURN — sub-agents it spawned
+        // (e.g. background Task agents) may still be running. With live children
+        // the session is not actually finished: defer `Done`, stay `Working`,
+        // and promote when the last child stops. Checked before taking the
+        // session lock (reads the separate sub-agent map).
+        let defer_done =
+            mapped == SessionState::Done && self.has_live_subagents(&event.session_id);
         let mut sessions = self.sessions.write().expect("session lock poisoned");
         let session = sessions
             .entry(event.session_id.clone())
@@ -508,6 +528,15 @@ impl SessionManager {
         session.inactive = false;
         // Reset mid-tool by default; the Working arm re-arms it for `PreToolUse`.
         session.mid_tool = false;
+        // Any real event starts/continues a turn — drop a previous deferral; the
+        // `defer_done` branch below re-arms it for this event if needed.
+        session.awaiting_subagents = false;
+        let mapped = if defer_done {
+            session.awaiting_subagents = true;
+            SessionState::Working
+        } else {
+            mapped
+        };
         if let Some(cwd) = &event.cwd {
             session.cwd = Some(cwd.clone());
             session.project_name = project_name_from_cwd(cwd);
@@ -566,7 +595,8 @@ impl SessionManager {
             parent.last_seen = now;
         }
 
-        // SubagentStop ends the child node.
+        // SubagentStop ends the child node. If that was the last child of a
+        // parent whose `Done` was deferred (GF-130), the parent completes NOW.
         if event.hook_event_name == "SubagentStop" {
             let removed = self
                 .subagents
@@ -574,6 +604,7 @@ impl SessionManager {
                 .expect("subagent lock poisoned")
                 .remove(&key)
                 .is_some();
+            self.promote_awaiting_parent(&parent_id, now);
             return if removed {
                 EventOutcome::Removed
             } else {
@@ -614,13 +645,62 @@ impl SessionManager {
             .retain(|_, s| s.parent_session_id.as_deref() != Some(parent_id));
     }
 
+    /// Whether any live sub-agent node belongs to `session_id` (GF-130).
+    fn has_live_subagents(&self, session_id: &str) -> bool {
+        self.subagents
+            .read()
+            .expect("subagent lock poisoned")
+            .values()
+            .any(|s| s.parent_session_id.as_deref() == Some(session_id))
+    }
+
+    /// GF-130: if `parent_id` deferred its `Done` while sub-agents ran and the
+    /// last child is now gone, promote it to `Done` — completion (and its
+    /// notification) lands when the whole tree actually finished. Returns
+    /// whether the parent was promoted.
+    fn promote_awaiting_parent(&self, parent_id: &str, now: Instant) -> bool {
+        if self.has_live_subagents(parent_id) {
+            return false;
+        }
+        let mut sessions = self.sessions.write().expect("session lock poisoned");
+        let Some(parent) = sessions.get_mut(parent_id) else {
+            return false;
+        };
+        if !parent.awaiting_subagents {
+            return false;
+        }
+        parent.awaiting_subagents = false;
+        parent.state = SessionState::Done;
+        // The neglect (Done→Idle) timer starts from the TRUE completion moment.
+        parent.last_activity = now;
+        parent.last_seen = now;
+        true
+    }
+
+    /// Session ids that currently have at least one live sub-agent (GF-130).
+    fn parents_with_live_subagents(&self) -> HashSet<String> {
+        self.subagents
+            .read()
+            .expect("subagent lock poisoned")
+            .values()
+            .filter_map(|s| s.parent_session_id.clone())
+            .collect()
+    }
+
     /// Transition any `Done` session that has been quiet for longer than
     /// `idle_after` into `Idle`. Returns the ids that changed. Intended to be
     /// called periodically by a timer (ST-3).
     pub fn tick_idle_at(&self, now: Instant) -> Vec<String> {
         let mut changed = Vec::new();
+        // GF-130: a session whose sub-agents are still running is not neglected
+        // — its work continues through its children, so it must not drift to
+        // `Idle` while they run.
+        let busy_parents = self.parents_with_live_subagents();
         let mut sessions = self.sessions.write().expect("session lock poisoned");
         for session in sessions.values_mut() {
+            if busy_parents.contains(&session.id) {
+                continue;
+            }
             let elapsed = now.saturating_duration_since(session.last_activity);
             if session.state == SessionState::Done && elapsed >= self.idle_after {
                 session.state = SessionState::Idle;
@@ -647,9 +727,16 @@ impl SessionManager {
     /// idle ticker (lib.rs). `pending` sessions are skipped (state unconfirmed).
     pub fn tick_stale_working_at(&self, now: Instant) -> Vec<String> {
         let mut changed = Vec::new();
+        // GF-130: while sub-agents run, their hook events ARE the session's
+        // activity — the quiet parent is delegating, not interrupted, so it must
+        // not be flagged inactive.
+        let busy_parents = self.parents_with_live_subagents();
         let mut sessions = self.sessions.write().expect("session lock poisoned");
         for session in sessions.values_mut() {
             if session.state != SessionState::Working || session.pending || session.inactive {
+                continue;
+            }
+            if busy_parents.contains(&session.id) || session.awaiting_subagents {
                 continue;
             }
             let threshold = if session.mid_tool {
@@ -712,7 +799,27 @@ impl SessionManager {
         for id in &dead_subs {
             subs.remove(id);
         }
+        let evicted_any_sub = !dead_subs.is_empty();
         dead.extend(dead_subs);
+        drop(subs);
+        // GF-130: an awaiting parent whose children just got evicted (missed
+        // SubagentStop) must not hang in `Working` forever — promote it to
+        // `Done` now and report it changed so the widget/notifier refresh.
+        if evicted_any_sub {
+            let awaiting: Vec<String> = {
+                let sessions = self.sessions.read().expect("session lock poisoned");
+                sessions
+                    .values()
+                    .filter(|s| s.awaiting_subagents)
+                    .map(|s| s.id.clone())
+                    .collect()
+            };
+            for id in awaiting {
+                if self.promote_awaiting_parent(&id, now) {
+                    dead.push(id);
+                }
+            }
+        }
         dead
     }
 
@@ -1477,5 +1584,130 @@ mod tests {
         assert!(SessionState::Waiting.is_notifiable());
         assert!(!SessionState::Working.is_notifiable());
         assert!(!SessionState::Idle.is_notifiable());
+    }
+
+    // --- GF-130: parent completion defers while sub-agents are still running ---
+
+    fn sub_event(parent: &str, agent: &str, name: &str) -> HookEvent {
+        event_json(serde_json::json!({
+            "session_id": parent, "hook_event_name": name,
+            "agent_id": agent, "agent_type": "Explore"
+        }))
+    }
+
+    #[test]
+    fn stop_with_live_subagents_defers_done() {
+        let m = SessionManager::new();
+        let t0 = Instant::now();
+        m.handle_event_at(&event("p", "PreToolUse"), t0);
+        m.handle_event_at(&sub_event("p", "a1", "SubagentStart"), t0);
+        m.handle_event_at(&event("p", "Stop"), t0);
+        let parent = m.snapshot().into_iter().find(|s| s.id == "p").unwrap();
+        assert_eq!(parent.state, SessionState::Working, "Done deferred while a child runs");
+        assert_eq!(parent.summary, "waiting for sub-agents to finish");
+    }
+
+    #[test]
+    fn stop_without_subagents_is_done_immediately() {
+        let m = SessionManager::new();
+        m.handle_event(&event("p", "PreToolUse"));
+        m.handle_event(&event("p", "Stop"));
+        assert_eq!(m.snapshot()[0].state, SessionState::Done, "no children → Done as before");
+    }
+
+    #[test]
+    fn last_subagent_stop_promotes_parent_to_done() {
+        let m = SessionManager::new();
+        let t0 = Instant::now();
+        m.handle_event_at(&event("p", "PreToolUse"), t0);
+        m.handle_event_at(&sub_event("p", "a1", "SubagentStart"), t0);
+        m.handle_event_at(&sub_event("p", "a2", "SubagentStart"), t0);
+        m.handle_event_at(&event("p", "Stop"), t0);
+
+        m.handle_event_at(&sub_event("p", "a1", "SubagentStop"), t0);
+        let parent = m.snapshot().into_iter().find(|s| s.id == "p").unwrap();
+        assert_eq!(parent.state, SessionState::Working, "one child still running");
+
+        m.handle_event_at(&sub_event("p", "a2", "SubagentStop"), t0);
+        let parent = m.snapshot().into_iter().find(|s| s.id == "p").unwrap();
+        assert_eq!(parent.state, SessionState::Done, "last child stop completes the parent");
+    }
+
+    #[test]
+    fn user_prompt_clears_subagent_deferral() {
+        let m = SessionManager::new();
+        let t0 = Instant::now();
+        m.handle_event_at(&event("p", "PreToolUse"), t0);
+        m.handle_event_at(&sub_event("p", "a1", "SubagentStart"), t0);
+        m.handle_event_at(&event("p", "Stop"), t0); // deferred Done
+        m.handle_event_at(&event("p", "UserPromptSubmit"), t0); // new turn begins
+        m.handle_event_at(&sub_event("p", "a1", "SubagentStop"), t0);
+        let parent = m.snapshot().into_iter().find(|s| s.id == "p").unwrap();
+        assert_eq!(
+            parent.state,
+            SessionState::Working,
+            "a new turn dropped the deferral — child stop must not force Done"
+        );
+    }
+
+    #[test]
+    fn done_parent_with_running_child_is_not_idled() {
+        let m = SessionManager::with_idle_after(Duration::from_secs(30));
+        let t0 = Instant::now();
+        m.handle_event_at(&event("p", "Stop"), t0);
+        // A child seeded AFTER the turn ended still blocks the Done→Idle drift.
+        m.handle_event_at(&sub_event("p", "a1", "SubagentStart"), t0);
+        assert!(
+            m.tick_idle_at(t0 + Duration::from_secs(31)).is_empty(),
+            "live child blocks Done→Idle"
+        );
+        m.handle_event_at(&sub_event("p", "a1", "SubagentStop"), t0 + Duration::from_secs(31));
+        assert_eq!(
+            m.tick_idle_at(t0 + Duration::from_secs(62)),
+            vec!["p".to_string()],
+            "neglect timer applies again once the child is gone"
+        );
+    }
+
+    #[test]
+    fn delegating_parent_is_not_flagged_inactive() {
+        let m = SessionManager::new();
+        let t0 = Instant::now();
+        m.handle_event_at(
+            &event_json(serde_json::json!({
+                "session_id": "p", "hook_event_name": "PreToolUse",
+                "tool_name": "Task", "tool_input": {"description": "explore"}
+            })),
+            t0,
+        );
+        m.handle_event_at(&sub_event("p", "a1", "PreToolUse"), t0);
+        assert!(
+            m.tick_stale_working_at(t0 + Duration::from_secs(1000)).is_empty(),
+            "a parent with a live child is delegating, not interrupted"
+        );
+    }
+
+    #[test]
+    fn evicted_children_promote_awaiting_parent() {
+        let m = SessionManager::with_timeouts(Duration::from_secs(60), Duration::from_secs(100));
+        let t0 = Instant::now();
+        m.handle_event_at(&event("p", "PreToolUse"), t0);
+        m.handle_event_at(&sub_event("p", "a1", "SubagentStart"), t0);
+        m.handle_event_at(&event("p", "Stop"), t0); // deferred Done
+        // The poll keeps the parent alive while the child goes silent (missed
+        // SubagentStop).
+        m.touch_seen("p", t0 + Duration::from_secs(90));
+        let changed = m.tick_evict_at(t0 + Duration::from_secs(101));
+        assert!(
+            changed.contains(&"p".to_string()),
+            "promoted parent is reported so the widget/notifier refresh"
+        );
+        let snap = m.snapshot();
+        let parent = snap.iter().find(|s| s.id == "p").unwrap();
+        assert_eq!(parent.state, SessionState::Done, "orphaned deferral resolves to Done");
+        assert!(
+            snap.iter().all(|s| s.parent_session_id.is_none()),
+            "stale child was evicted"
+        );
     }
 }
