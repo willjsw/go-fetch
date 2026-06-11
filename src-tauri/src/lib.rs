@@ -43,7 +43,14 @@ const PREEXISTING_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const SESSIONS_UPDATE_EVENT: &str = "sessions-update";
 
 /// Apply widget display preferences to the main window (Task 14 / WC-5):
-/// always-on-top, and auto-hide when no session is active.
+/// always-on-top, and — only when `auto_hide` is enabled — hide while no
+/// session is active / reappear on activity.
+///
+/// GF-132: with `auto_hide` OFF this must not touch visibility at all. It used
+/// to call `window.show()` on every refresh, so a widget the user explicitly
+/// hid (− button / tray) popped back up on the next hook event — one of the
+/// "window appears inconsistently" reports. Visibility in manual mode belongs
+/// to the user (tray click, Dock click, − button) exclusively.
 fn apply_window_prefs(
     handle: &tauri::AppHandle,
     store: &settings::SettingsStore,
@@ -52,10 +59,12 @@ fn apply_window_prefs(
     let widget = store.get().widget;
     if let Some(window) = handle.get_webview_window("main") {
         let _ = window.set_always_on_top(widget.always_on_top);
-        if widget.auto_hide && !manager.has_active() {
-            let _ = window.hide();
-        } else {
-            let _ = window.show();
+        if widget.auto_hide {
+            if manager.has_active() {
+                let _ = window.show();
+            } else {
+                let _ = window.hide();
+            }
         }
     }
 }
@@ -355,18 +364,40 @@ pub fn run() {
                     .build(app);
             }
 
-            // Apply initial window preferences (always-on-top + auto-hide).
+            // Apply initial window preferences (always-on-top), then ALWAYS
+            // show the widget on launch (GF-132): the user just started the
+            // app, so it must visibly appear. Previously, auto_hide + no active
+            // sessions hid the window immediately at startup — the app looked
+            // like it never opened until the tray icon was clicked. Auto-hide
+            // may still reclaim it later, on the next session-state change.
             apply_window_prefs(&handle, &settings_store, &manager);
+            if let Some(window) = handle.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
 
             Ok(())
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
-    // Clean up GoFetch's hooks from settings.json when the app exits (SE-3).
-    app.run(|_app_handle, event| {
-        if let tauri::RunEvent::Exit = event {
-            hook_installer::unregister();
+    // Clean up GoFetch's hooks from settings.json when the app exits (SE-3),
+    // and restore the widget when the Dock icon is clicked (GF-132).
+    app.run(|app_handle, event| {
+        match event {
+            tauri::RunEvent::Exit => hook_installer::unregister(),
+            // macOS fires `Reopen` when the running app is activated again —
+            // e.g. its Dock icon or Launchpad entry is clicked. Without this
+            // handler a hidden widget (auto-hide / − button) could only come
+            // back via the small tray icon; the Dock icon appeared dead.
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Reopen { .. } => {
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
+            _ => {}
         }
     });
 }
