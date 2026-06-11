@@ -38,6 +38,20 @@ const DEFAULT_IDLE_AFTER: Duration = Duration::from_secs(60);
 /// disappears, ~5 minutes after it dies.
 const DEFAULT_STALE_AFTER: Duration = Duration::from_secs(5 * 60);
 
+/// How long a `Working` session may emit no hook event before GoFetch flags it
+/// `inactive` — a **visual-only** "may need you" hint for the interrupt /
+/// IDE-permission blind spots (Claude Code fires no hook on user interrupt, and
+/// the VS Code extension fires no permission `Notification` — see README "Known
+/// limitations"). Two thresholds: a shorter one between tool calls (180s), and a
+/// longer one while a tool is in flight (280s), since a slow build/test
+/// legitimately emits nothing while it runs. Both stay under [`DEFAULT_STALE_AFTER`]
+/// (300s) so a flagged session is still tracked — it is flagged inactive before it
+/// could be stale-evicted, even when the pre-existing poll isn't refreshing
+/// `last_seen`. Heuristic: this can never *confirm* an interrupt, so it never
+/// changes state and never notifies.
+const WORKING_INACTIVE_AFTER: Duration = Duration::from_secs(180);
+const WORKING_INACTIVE_AFTER_MID_TOOL: Duration = Duration::from_secs(280);
+
 /// The five monitored session states, ordered by monitoring priority.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -110,6 +124,22 @@ pub struct Session {
     /// real hook event clears it. The five-state engine is unchanged: `pending`
     /// is a display-layer flag layered on a non-notifiable underlying state.
     pub pending: bool,
+    /// Visual-only soft flag: a `Working` session that has emitted no hook event
+    /// for a while. Because Claude Code fires no hook on user interrupt, and the
+    /// VS Code extension fires no permission `Notification`, such a session would
+    /// otherwise sit at a misleading `Working` until stale-evicted. We cannot
+    /// *confirm* an interrupt (there is no signal), so this is a heuristic "no
+    /// activity — may need you" hint: `state` stays `Working` (priority unchanged)
+    /// and **no notification fires**. Set by [`SessionManager::tick_stale_working`],
+    /// cleared by any fresh hook event. The widget dims/annotates the card.
+    #[serde(default)]
+    pub inactive: bool,
+    /// Whether a tool is currently in flight (`PreToolUse` seen, no `PostToolUse`
+    /// yet). A long-running tool legitimately emits nothing while it runs, so the
+    /// inactivity threshold is longer while mid-tool — avoids flagging a slow
+    /// build/test as inactive. Internal heuristic input; not serialized.
+    #[serde(skip)]
+    pub mid_tool: bool,
     /// Layer 2 (GF-108): for a sub-agent node, the `session_id` of its parent
     /// session. Sub-agents share the parent's `session_id`, so they are tracked
     /// in a separate map and carry this link for the widget to nest them.
@@ -149,6 +179,8 @@ impl Session {
             idle_seconds: 0,
             summary: String::new(),
             pending: false,
+            inactive: false,
+            mid_tool: false,
             parent_session_id: None,
             agent_id: None,
             last_activity: now,
@@ -164,6 +196,12 @@ impl Session {
             return "detected — awaiting activity".to_string();
         }
         match self.state {
+            // A `Working` session flagged inactive (no hook events for a while)
+            // shows the heuristic hint instead of the last tool — it may have been
+            // interrupted or be waiting on an IDE permission prompt we never saw.
+            SessionState::Working if self.inactive => {
+                format!("no activity for {} — may need you", fmt_elapsed(self.idle_seconds))
+            }
             SessionState::Working => match (self.last_tool.as_deref(), self.last_tool_input.as_ref()) {
                 (Some(tool), Some(input)) => summarize_tool(tool, input),
                 (Some(tool), None) => format!("using {tool}"),
@@ -216,6 +254,15 @@ fn last_path_component(path: &str) -> String {
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
         .unwrap_or_else(|| path.to_string())
+}
+
+/// Compact elapsed-time label for summaries, e.g. `45s` / `3m`.
+fn fmt_elapsed(secs: u64) -> String {
+    if secs >= 60 {
+        format!("{}m", secs / 60)
+    } else {
+        format!("{secs}s")
+    }
 }
 
 /// Truncate to at most `max` chars, appending `…` if cut.
@@ -455,8 +502,12 @@ impl SessionManager {
 
         session.last_activity = now;
         session.last_seen = now;
-        // A real activity event confirms the session's state (clears SL-5 pending).
+        // A real activity event confirms the session's state (clears SL-5 pending)
+        // and clears the inactivity hint — there was activity after all.
         session.pending = false;
+        session.inactive = false;
+        // Reset mid-tool by default; the Working arm re-arms it for `PreToolUse`.
+        session.mid_tool = false;
         if let Some(cwd) = &event.cwd {
             session.cwd = Some(cwd.clone());
             session.project_name = project_name_from_cwd(cwd);
@@ -469,6 +520,10 @@ impl SessionManager {
                     session.last_tool_input = event.tool_input.clone();
                 }
                 session.waiting_kind = None;
+                // A tool is "in flight" only between its `PreToolUse` and the
+                // matching `PostToolUse`; used to lengthen the inactivity
+                // threshold so a slow tool isn't mistaken for an interrupt.
+                session.mid_tool = event.hook_event_name == "PreToolUse";
             }
             SessionState::Waiting => {
                 session.waiting_kind = event.notification_type.clone();
@@ -577,6 +632,41 @@ impl SessionManager {
 
     pub fn tick_idle(&self) -> Vec<String> {
         self.tick_idle_at(Instant::now())
+    }
+
+    /// Flag any `Working` session that has emitted no hook event for longer than
+    /// the inactivity threshold as `inactive` — a **visual-only** "may need you"
+    /// hint for the interrupt / IDE-permission blind spots. Never changes `state`
+    /// and never notifies: the session stays `Working` (a non-notifiable state),
+    /// only the flag flips, so the widget can dim/annotate the card without firing
+    /// an OS notification. A longer threshold applies while a tool is in flight so
+    /// a slow build/test isn't mistaken for inactivity. Returns the ids that
+    /// **newly** flipped to inactive (so the caller can refresh the widget); an
+    /// already-inactive session is not reported again. Heuristic — it cannot
+    /// *confirm* an interrupt, only that no events have arrived. Called by the
+    /// idle ticker (lib.rs). `pending` sessions are skipped (state unconfirmed).
+    pub fn tick_stale_working_at(&self, now: Instant) -> Vec<String> {
+        let mut changed = Vec::new();
+        let mut sessions = self.sessions.write().expect("session lock poisoned");
+        for session in sessions.values_mut() {
+            if session.state != SessionState::Working || session.pending || session.inactive {
+                continue;
+            }
+            let threshold = if session.mid_tool {
+                WORKING_INACTIVE_AFTER_MID_TOOL
+            } else {
+                WORKING_INACTIVE_AFTER
+            };
+            if now.saturating_duration_since(session.last_activity) >= threshold {
+                session.inactive = true;
+                changed.push(session.id.clone());
+            }
+        }
+        changed
+    }
+
+    pub fn tick_stale_working(&self) -> Vec<String> {
+        self.tick_stale_working_at(Instant::now())
     }
 
     /// Evict sessions with no event for longer than `stale_after` (SL-3 safety
@@ -1063,6 +1153,70 @@ mod tests {
         let later = t0 + Duration::from_secs(31);
         assert_eq!(m.tick_idle_at(later), vec!["s".to_string()]);
         assert_eq!(m.snapshot()[0].state, SessionState::Idle);
+    }
+
+    #[test]
+    fn working_flips_to_inactive_after_silence() {
+        // A Working session silent past the between-tools threshold (180s) is
+        // flagged inactive — visual-only: state stays Working, no notification.
+        let m = SessionManager::new();
+        let t0 = Instant::now();
+        m.handle_event_at(&event("s", "PostToolUse"), t0); // Working, not mid-tool
+        assert!(m.tick_stale_working_at(t0).is_empty(), "fresh Working is not inactive");
+        assert!(
+            m.tick_stale_working_at(t0 + Duration::from_secs(120)).is_empty(),
+            "still active below the 180s threshold"
+        );
+        let later = t0 + Duration::from_secs(181);
+        assert_eq!(m.tick_stale_working_at(later), vec!["s".to_string()]);
+        let s = &m.snapshot()[0];
+        assert!(s.inactive, "flagged inactive");
+        assert_eq!(s.state, SessionState::Working, "state unchanged (visual-only)");
+        assert!(!s.state.is_notifiable(), "still non-notifiable → no OS notification");
+        assert!(s.summary.contains("no activity"), "summary reflects inactivity: {}", s.summary);
+    }
+
+    #[test]
+    fn mid_tool_uses_longer_threshold() {
+        // A tool in flight (PreToolUse, no PostToolUse) gets the longer 240s
+        // threshold so a slow build/test isn't mistaken for an interrupt.
+        let m = SessionManager::new();
+        let t0 = Instant::now();
+        m.handle_event_at(&event("s", "PreToolUse"), t0); // Working, mid-tool
+        assert!(
+            m.tick_stale_working_at(t0 + Duration::from_secs(181)).is_empty(),
+            "mid-tool ignores the short (180s) threshold — a slow tool is still running"
+        );
+        assert_eq!(
+            m.tick_stale_working_at(t0 + Duration::from_secs(281)),
+            vec!["s".to_string()],
+            "mid-tool flips only after the long (280s) threshold"
+        );
+    }
+
+    #[test]
+    fn fresh_event_clears_inactive_and_does_not_refire() {
+        let m = SessionManager::new();
+        let t0 = Instant::now();
+        m.handle_event_at(&event("s", "PostToolUse"), t0);
+        let later = t0 + Duration::from_secs(181);
+        assert_eq!(m.tick_stale_working_at(later), vec!["s".to_string()]);
+        // Already-inactive session is not reported again (no churn).
+        assert!(m.tick_stale_working_at(later).is_empty(), "inactive does not re-fire");
+        // A fresh hook event clears the flag — there was activity after all.
+        m.handle_event_at(&event("s", "PostToolUse"), later);
+        assert!(!m.snapshot()[0].inactive, "fresh event clears inactive");
+    }
+
+    #[test]
+    fn non_working_sessions_are_never_flagged_inactive() {
+        let m = SessionManager::new();
+        let t0 = Instant::now();
+        m.handle_event_at(&event("s", "Stop"), t0); // Done, not Working
+        assert!(
+            m.tick_stale_working_at(t0 + Duration::from_secs(1000)).is_empty(),
+            "only Working sessions are flagged inactive"
+        );
     }
 
     #[test]
