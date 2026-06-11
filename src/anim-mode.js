@@ -33,6 +33,7 @@ const SCALE_FAR = 0.62; // sprite scale at v=0 (back of the floor)
 const SCALE_NEAR = 1.12; // sprite scale at v=1 (front of the floor)
 const LEASH_SESSION = 0.42; // how far a session may wander from the root (u/v units)
 const LEASH_SUB = 0.2; // how far a sub-agent may wander from its session
+const LEASH_ANCHOR = 0.22; // leash attach height as a fraction of sprite size (GF-125)
 const DRAG_THRESHOLD = 5; // px of pointer travel before a click becomes a drag
 
 /** Per-state stroll personality: what to do on arrival, for how long, and how
@@ -421,11 +422,14 @@ function drawLeashes(dims) {
     const to = project(ent, dims);
     const fromSize = sizeOf(parent, dims);
     const toSize = sizeOf(ent, dims);
-    // Attach at the characters' bodies: nodes anchor feet-down, with the title
-    // strip (~14px) between the floor point and the sprite.
+    // Attach low on the body (lower-rear, ~22% of the sprite above the title
+    // strip), not at the sprite's vertical center: a center anchor sits at head
+    // height on small sprites, so a leash to a character further back appeared
+    // to pierce through the head (GF-125). The harness layer draws behind the
+    // nodes, so a low anchor reads as clipped to the character's back.
     links.push({
-      from: { x: from.x, y: from.y - 14 - fromSize * 0.5 },
-      to: { x: to.x, y: to.y - 14 - toSize * 0.5 },
+      from: { x: from.x, y: from.y - 14 - fromSize * LEASH_ANCHOR },
+      to: { x: to.x, y: to.y - 14 - toSize * LEASH_ANCHOR },
       session: ent.session,
     });
   }
